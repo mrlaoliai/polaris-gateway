@@ -51,7 +51,7 @@ run: ui
 # 6. 快速运行 (跳过前端构建，仅用于后端逻辑调试)
 # 只要 ui/dist 目录存在即可编译通过
 dev-backend:
-	@mkdir -p $(UI_DIST)
-	@touch $(UI_DIST)/.gitkeep
-	@echo "=> Quick running backend..."
-	go run main.go
+    @mkdir -p $(UI_DIST)
+    @touch $(UI_DIST)/.gitkeep
+    @echo "=> Quick running backend..."
+    go run main.go

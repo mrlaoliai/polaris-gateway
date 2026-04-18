@@ -4,13 +4,26 @@
 @tailwind utilities;
 
 @layer base {
-    body {
-        /* 强制亮色背景与深灰文本，屏蔽系统暗黑模式干扰 */
-        @apply bg-slate-50 text-slate-900 antialiased;
-        color-scheme: light;
+    :root {
+        --p-bg: theme('colors.slate.50');
+        --p-text: theme('colors.slate.900');
+        --p-card: theme('colors.white');
+        --p-border: theme('colors.slate.200');
     }
 
-    /* 自定义滚动条使其更整洁 */
+    .dark {
+        --p-bg: theme('colors.slate.950');
+        --p-text: theme('colors.slate.50');
+        --p-card: theme('colors.slate.900');
+        --p-border: theme('colors.slate.800');
+    }
+
+    body {
+        @apply antialiased transition-colors duration-200;
+        background-color: var(--p-bg);
+        color: var(--p-text);
+    }
+
     ::-webkit-scrollbar {
         width: 6px;
         height: 6px;
@@ -21,10 +34,16 @@
     }
 
     ::-webkit-scrollbar-thumb {
-        @apply bg-slate-300 rounded-full;
+        @apply bg-slate-300 rounded-full dark:bg-slate-700;
+    }
+}
+
+@layer components {
+    .p-card {
+        @apply bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm;
     }
 
-    ::-webkit-scrollbar-thumb:hover {
-        @apply bg-slate-400;
+    .p-input {
+        @apply w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md focus:ring-2 focus:ring-blue-500 outline-none transition-all;
     }
 }

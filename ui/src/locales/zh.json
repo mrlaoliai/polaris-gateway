@@ -11,11 +11,32 @@
         "edit": "编辑",
         "delete": "删除",
         "status": "状态",
-        "actions": "操作"
+        "actions": "操作",
+        "cancel": "取消",
+        "confirm": "确定"
     },
     "dashboard": {
         "total_tokens": "今日流转 Tokens",
         "active_agents": "活跃 Agent 数",
         "sentinel_health": "集群健康度"
+    },
+    "keys": {
+        "generate": "生成新密钥",
+        "revoke": "撤销",
+        "revokeConfirm": "确定要撤销此密钥吗？所有关联的 Agent 将立即失效。",
+        "table": {
+            "value": "密钥内容",
+            "limit": "每日额度",
+            "used": "已消耗",
+            "status": "状态",
+            "actions": "操作",
+            "limitUnlimited": "无限",
+            "statusActive": "正常",
+            "statusExhausted": "额度耗尽"
+        },
+        "modal": {
+            "title": "创建网关凭证",
+            "limitLabel": "每日 Token 限制 (-1 为无限)"
+        }
     }
 }

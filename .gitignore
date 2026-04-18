@@ -1,1 +1,6 @@
-ui/node_modules/*
+# .gitignore 建议添加内容
+ui/node_modules/
+ui/dist/
+build/
+polaris.db
+polaris_l2.db
