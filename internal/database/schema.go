@@ -50,7 +50,7 @@ func migrate(db *sql.DB) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			trace_id TEXT NOT NULL,
 			chunk_index INTEGER,
-			payload BLOB,
+			file_path TEXT NOT NULL, -- 存储 VFS 中的物理路径
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_session_trace ON session_chunks(trace_id);`,

@@ -9,14 +9,17 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/mrlaoliai/polaris-gateway/internal/database"
 )
 
 type Sentinel struct {
 	db     *sql.DB
-	client *http.Client // [优化] 复用 Client 提升连接效率
+	dbMgr  *database.DBManager // 注入协调器
+	client *http.Client        // [优化] 复用 Client 提升连接效率
 }
 
-func NewSentinel(db *sql.DB) *Sentinel {
+func NewSentinel(db *sql.DB, dbMgr *database.DBManager) *Sentinel {
 	return &Sentinel{
 		db: db,
 		client: &http.Client{
@@ -27,6 +30,7 @@ func NewSentinel(db *sql.DB) *Sentinel {
 				MaxIdleConnsPerHost: 10,
 			},
 		},
+		dbMgr: dbMgr,
 	}
 }
 
@@ -74,10 +78,7 @@ func (s *Sentinel) checkAccounts(ctx context.Context) {
 
 			if !s.realPing(key, proto, url) {
 				log.Printf("[Sentinel] 账号 [%d] 拨测失败，执行状态下线", accountID)
-				_, err := s.db.Exec("UPDATE accounts SET status = 'error' WHERE id = ?", accountID)
-				if err != nil {
-					log.Printf("[Sentinel] 账号 [%d] 状态库更新失败: %v", accountID, err)
-				}
+				s.dbMgr.AsyncWrite("UPDATE accounts SET status = 'error' WHERE id = ?", accountID)
 			}
 		}(id, apiKey, protocol, baseURL)
 	}

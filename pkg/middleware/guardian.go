@@ -5,9 +5,10 @@ package middleware
 import (
 	"context"
 	"database/sql"
-	"log"
 	"net/http"
 	"strings"
+
+	"github.com/mrlaoliai/polaris-gateway/internal/database"
 )
 
 type contextKey string
@@ -17,11 +18,12 @@ const (
 )
 
 type Guardian struct {
-	db *sql.DB
+	db    *sql.DB
+	dbMgr *database.DBManager // 注入协调器
 }
 
-func NewGuardian(db *sql.DB) *Guardian {
-	return &Guardian{db: db}
+func NewGuardian(db *sql.DB, dbMgr *database.DBManager) *Guardian {
+	return &Guardian{db: db, dbMgr: dbMgr}
 }
 
 // AuthAndQuotaMiddleware 执行入口鉴权与静态配额预检
@@ -63,14 +65,6 @@ func (g *Guardian) AuthAndQuotaMiddleware(next http.HandlerFunc) http.HandlerFun
 }
 
 // RecordUsage 异步记录 Token 使用量 (由 main.go 或 Transformer 在响应结束后调用)
-func (g *Guardian) RecordUsage(keyID int, tokens int) {
-	go func() {
-		_, err := g.db.Exec(
-			"UPDATE gateway_keys SET used_tokens = used_tokens + ? WHERE id = ?",
-			tokens, keyID,
-		)
-		if err != nil {
-			log.Printf("[Guardian] 记录配额消耗失败: %v (KeyID: %d, Tokens: %d)", err, keyID, tokens)
-		}
-	}()
+func (g *Guardian) RecordUsage(mgr *database.DBManager, keyID int, tokens int) {
+	mgr.AsyncWrite("UPDATE gateway_keys SET used_tokens = used_tokens + ? WHERE id = ?", tokens, keyID)
 }
