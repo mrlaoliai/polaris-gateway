@@ -1,7 +1,7 @@
 # Polaris Gateway 配置文件
 server:
   host: "127.0.0.1" # 默认只允许本地访问
-  port: 8080        # 修改此处更换端口号
+  port: 28080        # 修改此处更换端口号
   read_timeout: 15
   write_timeout: 15
 
