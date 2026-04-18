@@ -1,0 +1,21 @@
+{
+    "nav": {
+        "dashboard": "Dashboard",
+        "gateway_keys": "Gateway Keys",
+        "routing_rules": "Smart Routing",
+        "accounts": "Account Pool",
+        "settings": "Settings"
+    },
+    "common": {
+        "add": "Add",
+        "edit": "Edit",
+        "delete": "Delete",
+        "status": "Status",
+        "actions": "Actions"
+    },
+    "dashboard": {
+        "total_tokens": "Tokens Today",
+        "active_agents": "Active Agents",
+        "sentinel_health": "Cluster Health"
+    }
+}

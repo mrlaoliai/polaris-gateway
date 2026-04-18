@@ -1,0 +1,21 @@
+{
+    "nav": {
+        "dashboard": "控制台",
+        "gateway_keys": "网关凭证",
+        "routing_rules": "智能路由",
+        "accounts": "密钥资源池",
+        "settings": "系统设置"
+    },
+    "common": {
+        "add": "添加",
+        "edit": "编辑",
+        "delete": "删除",
+        "status": "状态",
+        "actions": "操作"
+    },
+    "dashboard": {
+        "total_tokens": "今日流转 Tokens",
+        "active_agents": "活跃 Agent 数",
+        "sentinel_health": "集群健康度"
+    }
+}
