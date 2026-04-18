@@ -4,3 +4,8 @@ ui/dist/
 build/
 polaris.db
 polaris_l2.db
+polaris_l2.db-shm
+polaris_l2.db-wal
+polaris.db-shm
+.gitignore
+polaris.db-wal
