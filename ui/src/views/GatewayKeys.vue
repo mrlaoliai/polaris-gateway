@@ -1,151 +1,115 @@
 <template>
-  <div class="keys-container">
-    <div class="header-section">
-      <h2>网关密钥管理 (Gateway Keys)</h2>
-      <button @click="showAddModal = true" class="btn-primary">生成新密钥</button>
-    </div>
-
-    <div class="stats-grid">
-      <div class="stat-card">
-        <span class="label">活跃密钥</span>
-        <span class="value">{{ keys.length }}</span>
+  <div class="space-y-6">
+    <div class="flex justify-between items-center">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-900">{{ $t('nav.gateway_keys') }}</h1>
+        <p class="text-slate-500 text-sm mt-1">管理用于接入网关的逻辑凭证与配额</p>
       </div>
+      <button 
+        @click="showCreateModal = true"
+        class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
+      >
+        <span class="text-lg">+</span> {{ $t('keys.generate') }}
+      </button>
     </div>
 
-    <div class="table-card">
-      <table class="data-table">
-        <thead>
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <table class="w-full text-left border-collapse">
+        <thead class="bg-slate-50 border-b border-slate-200">
           <tr>
-            <th>ID</th>
-            <th>密钥内容 (Key Value)</th>
-            <th>今日额度 (Daily Limit)</th>
-            <th>已消耗 (Used)</th>
-            <th>状态</th>
-            <th>操作</th>
+            <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">ID</th>
+            <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">{{ $t('keys.table.value') }}</th>
+            <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">{{ $t('keys.table.limit') }}</th>
+            <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">{{ $t('keys.table.used') }}</th>
+            <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">{{ $t('keys.table.status') }}</th>
+            <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase text-right">{{ $t('keys.table.actions') }}</th>
           </tr>
         </thead>
-        <tbody>
-          <tr v-for="key in keys" :key="key.id">
-            <td>{{ key.id }}</td>
-            <td class="key-cell">
-              <code>{{ key.key_value }}</code>
-              <button @click="copyKey(key.key_value)" class="btn-icon">📋</button>
+        <tbody class="divide-y divide-slate-200">
+          <tr v-for="key in keys" :key="key.id" class="hover:bg-slate-50 transition-colors">
+            <td class="px-6 py-4 text-sm text-slate-600">#{{ key.id }}</td>
+            <td class="px-6 py-4">
+              <div class="flex items-center gap-2">
+                <code class="bg-slate-100 px-2 py-1 rounded text-indigo-600 font-mono text-xs">
+                  {{ maskKey(key.key_value) }}
+                </code>
+                <button @click="copyToClipboard(key.key_value)" class="text-slate-400 hover:text-indigo-600 transition-colors">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
             </td>
-            <td>{{ key.daily_limit === -1 ? '无限' : key.daily_limit }}</td>
-            <td>{{ key.used_tokens }}</td>
-            <td>
-              <span class="tag" :class="key.used_tokens >= key.daily_limit && key.daily_limit !== -1 ? 'tag-error' : 'tag-success'">
-                {{ key.used_tokens >= key.daily_limit && key.daily_limit !== -1 ? '额度耗尽' : '正常' }}
+            <td class="px-6 py-4 text-sm text-slate-600">
+              {{ key.daily_limit === -1 ? $t('keys.table.limitUnlimited') : key.daily_limit.toLocaleString() }}
+            </td>
+            <td class="px-6 py-4 text-sm text-slate-600">{{ key.used_tokens.toLocaleString() }}</td>
+            <td class="px-6 py-4">
+              <span 
+                class="px-2 py-1 rounded-full text-xs font-medium"
+                :class="isExhausted(key) ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'"
+              >
+                {{ isExhausted(key) ? $t('keys.table.statusExhausted') : $t('keys.table.statusActive') }}
               </span>
             </td>
-            <td>
-              <button @click="deleteKey(key.id)" class="btn-text-danger">删除</button>
+            <td class="px-6 py-4 text-right">
+              <button 
+                @click="confirmDelete(key.id)"
+                class="text-slate-400 hover:text-red-600 transition-colors text-sm font-medium"
+              >
+                {{ $t('keys.revoke') }}
+              </button>
             </td>
+          </tr>
+          <tr v-if="keys.length === 0">
+            <td colspan="6" class="px-6 py-12 text-center text-slate-400">暂无网关密钥</td>
           </tr>
         </tbody>
       </table>
     </div>
 
-    <div v-if="showAddModal" class="modal-overlay">
-      <div class="modal-content">
-        <h3>创建新网关密钥</h3>
-        <div class="form-group">
-          <label>自定义密钥名称 (可选)</label>
-          <input v-model="newKey.key_value" placeholder="留空则随机生成" />
-        </div>
-        <div class="form-group">
-          <label>每日额度 (Daily Limit)</label>
-          <input type="number" v-model.number="newKey.daily_limit" placeholder="-1 代表无限" />
-        </div>
-        <div class="modal-actions">
-          <button @click="showAddModal = false" class="btn-secondary">取消</button>
-          <button @click="handleAdd" class="btn-primary">确认创建</button>
-        </div>
-      </div>
     </div>
-  </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { GatewayKeysAPI } from '../api'
 
+const { t } = useI18n()
 const keys = ref([])
-const showAddModal = ref(false)
-const newKey = ref({ key_value: '', daily_limit: -1 })
+const showCreateModal = ref(false)
 
 const fetchKeys = async () => {
   try {
-    const data = await GatewayKeysAPI.list()
-    keys.ref = data
+    keys.value = await GatewayKeysAPI.list()
   } catch (err) {
-    console.error('加载失败')
+    console.error('Failed to load keys')
   }
 }
 
-const handleAdd = async () => {
-  try {
-    await GatewayKeysAPI.create(newKey.value)
-    showAddModal.value = false
-    newKey.value = { key_value: '', daily_limit: -1 }
-    await fetchKeys()
-  } catch (err) {
-    alert('创建失败')
-  }
+const maskKey = (val) => {
+  if (!val) return ''
+  return `${val.substring(0, 8)}****************${val.substring(val.length - 4)}`
 }
 
-const deleteKey = async (id) => {
-  if (!confirm('确定要撤销此密钥吗？所有关联的 Agent 将立即失效。')) return
-  try {
-    await GatewayKeysAPI.delete(id)
-    await fetchKeys()
-  } catch (err) {
-    alert('删除失败')
-  }
+const isExhausted = (key) => {
+  return key.daily_limit !== -1 && key.used_tokens >= key.daily_limit
 }
 
-const copyKey = (val) => {
+const copyToClipboard = (val) => {
   navigator.clipboard.writeText(val)
-  alert('密钥已复制到剪贴板')
+  // 此处可集成一个简单的 Toast 提示
+}
+
+const confirmDelete = async (id) => {
+  if (confirm(t('keys.revokeConfirm'))) {
+    try {
+      await GatewayKeysAPI.delete(id)
+      await fetchKeys()
+    } catch (err) {
+      alert('撤销失败')
+    }
+  }
 }
 
 onMounted(fetchKeys)
 </script>
-
-<style scoped>
-.keys-container {
-  padding: 20px;
-}
-.header-section {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-}
-.key-cell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-code {
-  background: #f4f4f4;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-family: monospace;
-}
-.tag-success { background: #e6fffa; color: #2c7a7b; }
-.tag-error { background: #fff5f5; color: #c53030; }
-.modal-overlay {
-  position: fixed;
-  top: 0; left: 0; width: 100%; height: 100%;
-  background: rgba(0,0,0,0.5);
-  display: flex; align-items: center; justify-content: center;
-}
-.modal-content {
-  background: white; padding: 24px; border-radius: 8px; width: 400px;
-}
-.form-group { margin-bottom: 16px; }
-.form-group label { display: block; margin-bottom: 8px; }
-.form-group input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 12px; }
-</style>
