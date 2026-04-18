@@ -1,36 +1,43 @@
-// 基础中间件：pkg/middleware/zero_poetry.go
+// 内部使用：pkg/middleware/zero_poetry.go
 // 作者：mrlaoliai
 package middleware
 
 import (
 	"regexp"
-	"strings"
 )
 
-// ZeroPoetryProcessor 强制执行输出的纯净性
+// ZeroPoetryProcessor 强制执行输出的纯净性，移除 AI 的社交废话
 type ZeroPoetryProcessor struct {
 	filters []*regexp.Regexp
 }
 
-// NewZeroPoetryProcessor 装载预设的正则约束
 func NewZeroPoetryProcessor() *ZeroPoetryProcessor {
 	return &ZeroPoetryProcessor{
 		filters: []*regexp.Regexp{
-			// 过滤身份声明
+			// 1. 身份声明类
 			regexp.MustCompile(`(?i)(as an ai language model,?|i am an ai,?)`),
-			// 过滤社交辞令
-			regexp.MustCompile(`(?i)(i'm here to help\.?|understood,? i will\.?)`),
-			// 过滤过度解释
-			regexp.MustCompile(`(?i)certainly!? here is the.*?:\n`),
+			// 2. 确认/社交辞令类
+			regexp.MustCompile(`(?i)(i'm here to help\.?|understood,? i will\.?|certainly!?|surely!?)`),
+			// 3. 引导过渡类 (例如：Here is the updated code:)
+			regexp.MustCompile(`(?i)(here is the .*?:|i've updated the .*? to:)\n?`),
+			// 4. 结尾冗余类
+			regexp.MustCompile(`(?i)(let me know if you need anything else\.?)`),
 		},
 	}
 }
 
-// Process 针对传入的增量文本或完整文本执行清洗
+// Process 针对文本执行清洗。
+// 注意：为了保证流式输出的连贯性，严禁使用 TrimSpace，必须保留原始空白符。
 func (z *ZeroPoetryProcessor) Process(content string) string {
+	if content == "" {
+		return ""
+	}
+
 	result := content
 	for _, re := range z.filters {
+		// 使用 ReplaceAllString 直接替换为空，不触碰周边空格
 		result = re.ReplaceAllString(result, "")
 	}
-	return strings.TrimSpace(result)
+
+	return result
 }
