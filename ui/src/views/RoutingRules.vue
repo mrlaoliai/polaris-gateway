@@ -66,25 +66,25 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { RoutingRulesAPI } from '../api'
 
 const rules = ref([])
 const showCreateModal = ref(false)
 
-const loadRules = () => {
-  setTimeout(() => {
-    rules.value = [
-      { id: 1, in_model: 'claude-3-opus', target_model: 'deepseek-v4-reasoning', fallback_model: 'gemini-1.5-pro', has_dsl: true },
-      { id: 2, in_model: 'claude-3-5-sonnet', target_model: 'gemini-1.5-pro', fallback_model: null, has_dsl: false },
-      { id: 3, in_model: 'gpt-4o', target_model: 'gemini-1.5-pro', fallback_model: 'deepseek-v4-reasoning', has_dsl: true }
-    ]
-  }, 200)
+const loadRules = async () => {
+  try {
+    rules.value = await RoutingRulesAPI.list()
+  } catch (e) {
+    console.error('获取路由规则失败', e)
+  }
 }
 
-const deleteRule = (id) => {
-  rules.value = rules.value.filter(r => r.id !== id)
+const deleteRule = async (id) => {
+  if (confirm('确认删除该路由规则？')) {
+    await RoutingRulesAPI.delete(id)
+    await loadRules()
+  }
 }
 
-onMounted(() => {
-  loadRules()
-})
+onMounted(loadRules)
 </script>

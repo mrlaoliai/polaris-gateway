@@ -95,10 +95,16 @@ func (e *VertexExecutor) buildPayload(stdReq *schema.StandardRequest) ([]byte, e
 }
 
 func (e *VertexExecutor) ExecuteStream(ctx context.Context, stdReq *schema.StandardRequest) (io.ReadCloser, error) {
-	payload, _ := e.buildPayload(stdReq)
+	payload, err := e.buildPayload(stdReq)
+	if err != nil {
+		return nil, err
+	}
 	url := e.buildURL(true)
 
-	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(payload))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	// 保留对 Bearer Token 的支持 (可选)
@@ -114,10 +120,16 @@ func (e *VertexExecutor) ExecuteStream(ctx context.Context, stdReq *schema.Stand
 }
 
 func (e *VertexExecutor) Execute(ctx context.Context, stdReq *schema.StandardRequest) ([]byte, error) {
-	payload, _ := e.buildPayload(stdReq)
+	payload, err := e.buildPayload(stdReq)
+	if err != nil {
+		return nil, err
+	}
 	url := e.buildURL(false)
 
-	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(payload))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	if e.BearerToken != "" {
@@ -128,6 +140,6 @@ func (e *VertexExecutor) Execute(ctx context.Context, stdReq *schema.StandardReq
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return io.ReadAll(resp.Body)
 }

@@ -63,6 +63,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { AccountsAPI } from '../api'
 
 const accounts = ref([])
 const showCreateModal = ref(false)
@@ -74,26 +75,22 @@ const maskKey = (key) => {
 
 const confirmDelete = async (id) => {
   if (confirm('确认删除此账号？')) {
-    accounts.value = accounts.value.filter(a => a.id !== id)
+    await AccountsAPI.delete(id)
+    await loadAccounts()
   }
 }
 
 const editAccount = (account) => {
-  // TODO: 实现编辑弹窗逻辑
   alert(`编辑账号: ${account.provider_name}`)
 }
 
-const loadAccounts = () => {
-  setTimeout(() => {
-    accounts.value = [
-      { id: 1, provider_name: 'DeepSeek', api_key: 'sk-deepseek1234567890abcd', priority: 10, status: 'active' },
-      { id: 2, provider_name: 'Google Gemini', api_key: 'AIzaSyGemini1234567890wxyz', priority: 8, status: 'active' },
-      { id: 3, provider_name: 'Anthropic', api_key: 'sk-ant-api03-1234567890efgh', priority: 5, status: 'error' }
-    ]
-  }, 200)
+const loadAccounts = async () => {
+  try {
+    accounts.value = await AccountsAPI.list()
+  } catch (e) {
+    console.error('获取账号列表失败', e)
+  }
 }
 
-onMounted(() => {
-  loadAccounts()
-})
+onMounted(loadAccounts)
 </script>

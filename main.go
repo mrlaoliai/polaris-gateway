@@ -92,6 +92,10 @@ func main() {
 		handler.ServeHTTP(w, r)
 	})
 
+	// 注册 REST 管理 API，让前端可以真正读写 SQLite
+	apiHandler := dashboard.NewAPIHandler(primaryDB, dbMgr)
+	apiHandler.RegisterRoutes(mux)
+
 	coreHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 强制打印所有进入网关接口的请求
 		log.Printf("--> [API] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)

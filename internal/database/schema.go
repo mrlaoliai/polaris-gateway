@@ -70,6 +70,23 @@ func migrate(db *sql.DB) error {
 			locked_at DATETIME,
 			expires_at DATETIME -- [补全] 确保僵尸锁能被自动回收
 		);`,
+
+		// 8. [补全] 请求审计追踪表 (对应 README 中的 usage_stats)
+		`CREATE TABLE IF NOT EXISTS usage_stats (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			trace_id TEXT NOT NULL,
+			gateway_key_id INTEGER,
+			in_model TEXT,
+			target_model TEXT,
+			protocol TEXT,
+			latency_ms INTEGER DEFAULT 0,
+			tokens_used INTEGER DEFAULT 0,
+			status TEXT DEFAULT 'success',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY(gateway_key_id) REFERENCES gateway_keys(id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_usage_trace ON usage_stats(trace_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_usage_created ON usage_stats(created_at);`,
 	}
 
 	for _, q := range queries {

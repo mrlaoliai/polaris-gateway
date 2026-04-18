@@ -90,27 +90,29 @@ func (s *Sentinel) realPing(apiKey, protocol, baseURL string) bool {
 
 	switch protocol {
 	case "openai", "deepseek":
-		// 路由转换逻辑保持原有的优雅策略
 		modelsURL := strings.Replace(baseURL, "/chat/completions", "/models", 1)
 		req, err = http.NewRequest("GET", modelsURL, nil)
+		if err != nil {
+			return false
+		}
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	case "anthropic":
 		req, err = http.NewRequest("GET", "https://api.anthropic.com/v1/models", nil)
+		if err != nil {
+			return false
+		}
 		req.Header.Set("x-api-key", apiKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
 	default:
+		// Google/Vertex 暂不支持拨测，默认健康
 		return true
-	}
-
-	if err != nil {
-		return false
 	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 只要不是 401/403，通常代表账号 Key 本身有效
 	return resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden

@@ -82,7 +82,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-// import { DashboardAPI } from '../api' // 实际生产中取消注释
+import { DashboardAPI } from '../api'
 
 // 响应式状态定义
 const stats = ref({
@@ -90,30 +90,27 @@ const stats = ref({
   activeAgents: 0,
   health: 'Loading...'
 })
-
 const recentTraces = ref([])
 
-// 初始化数据拉取
+// 初始化数据拉取（真实 API）
 onMounted(async () => {
-  // 生产环境逻辑：
-  // try {
-  //   const data = await DashboardAPI.getStats()
-  //   stats.value = data
-  //   recentTraces.value = await DashboardAPI.getRecentTraces()
-  // } catch (err) { ... }
-
-  // 模拟后端数据库返回的初始化数据 (配合你在调试期无后端也能看到效果)
-  setTimeout(() => {
-    stats.value = {
-      totalTokens: 1425890,
-      activeAgents: 5,
-      health: 'Healthy'
-    }
-    recentTraces.value = [
-      { id: 'tr_8f9a2b1c', inModel: 'claude-3-opus', outModel: 'deepseek-v4-reasoning', latency: 8450, status: 'success' },
-      { id: 'tr_4c2d1e0f', inModel: 'claude-3-5-sonnet', outModel: 'gemini-1.5-pro', latency: 1200, status: 'success' },
-      { id: 'tr_7e5f8a9b', inModel: 'claude-code', outModel: 'deepseek-coder-v2', latency: 450, status: 'success' }
-    ]
-  }, 300)
+  try {
+    const overview = await DashboardAPI.getStats()
+    stats.value = overview
+  } catch (e) {
+    console.error('获取概览数据失败', e)
+  }
+  try {
+    const traces = await DashboardAPI.getRecentTraces()
+    recentTraces.value = traces.map(t => ({
+      id: t.id,
+      inModel: '-',
+      outModel: '-',
+      latency: t.latency,
+      status: t.status
+    }))
+  } catch (e) {
+    console.error('获取 Trace 数据失败', e)
+  }
 })
 </script>
