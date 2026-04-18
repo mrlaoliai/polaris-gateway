@@ -5,7 +5,8 @@
         "routing_rules": "智能路由",
         "accounts": "密钥资源池",
         "providers": "厂商与模型",
-        "settings": "系统设置"
+        "settings": "系统设置",
+        "user_providers": "用户厂商与密钥"
     },
     "common": {
         "add": "添加",

@@ -5,7 +5,8 @@
         "routing_rules": "Smart Routing",
         "accounts": "Account Pool",
         "providers": "Providers & Models",
-        "settings": "Settings"
+        "settings": "Settings",
+        "user_providers": "User Providers & Keys"
     },
     "common": {
         "add": "Add",

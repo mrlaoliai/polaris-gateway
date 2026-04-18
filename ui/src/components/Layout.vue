@@ -12,6 +12,7 @@
         <router-link to="/keys" class="nav-item" active-class="nav-active">{{ $t('nav.gateway_keys') }}</router-link>
         <router-link to="/routing" class="nav-item" active-class="nav-active">{{ $t('nav.routing_rules') }}</router-link>
         <router-link to="/accounts" class="nav-item" active-class="nav-active">{{ $t('nav.accounts') }}</router-link>
+        <router-link to="/user-providers" class="nav-item" active-class="nav-active">{{ $t('nav.user_providers') }}</router-link>
 
         <div class="pt-2 pb-1 px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">配置</div>
         <router-link to="/providers" class="nav-item" active-class="nav-active">{{ $t('nav.providers') }}</router-link>
@@ -55,6 +56,7 @@ const routeNameMap = {
   GatewayKeys: 'nav.gateway_keys',
   RoutingRules: 'nav.routing_rules',
   Accounts: 'nav.accounts',
+  UserProviders: 'nav.user_providers',
   Providers: 'nav.providers'
 }
 const routeTitle = computed(() => {

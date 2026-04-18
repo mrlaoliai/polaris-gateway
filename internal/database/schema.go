@@ -122,6 +122,58 @@ func migrate(db *sql.DB) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_usage_trace   ON usage_stats(trace_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_usage_created ON usage_stats(created_at);`,
+
+		// ══════════════════════════════════════════════════════════
+		// 9. 用户厂商配置表 (user_providers)
+		//    一个 system_provider 只能被实例化一次 (UNIQUE 约束)
+		//    超时字段 0 = 继承 system_providers 的系统默认值
+		// ══════════════════════════════════════════════════════════
+		`CREATE TABLE IF NOT EXISTS user_providers (
+			id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+			system_provider_id  TEXT    NOT NULL UNIQUE,
+			name                TEXT,
+			custom_base_url     TEXT,
+			conn_timeout        INTEGER DEFAULT 0,
+			read_timeout        INTEGER DEFAULT 0,
+			stream_idle_timeout INTEGER DEFAULT 30,
+			max_retries         INTEGER DEFAULT 3,
+			is_enabled          BOOLEAN DEFAULT 1,
+			created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (system_provider_id) REFERENCES system_providers(id)
+		);`,
+
+		// ══════════════════════════════════════════════════════════
+		// 10. 提供商密钥/凭证表 (provider_keys)
+		//     同时支持 API Key 和 Vertex SA/OAuth2 两种认证模式
+		//     selected_models: JSON 数组；NULL 或空 = 授权该厂商全部模型
+		//     is_enabled: 用户手动开关
+		//     status:     系统自动维护 (active|cooldown|invalid)
+		// ══════════════════════════════════════════════════════════
+		`CREATE TABLE IF NOT EXISTS provider_keys (
+			id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_provider_id     INTEGER NOT NULL,
+			label                TEXT,
+			credential_type      TEXT    NOT NULL DEFAULT 'api-key',
+			api_key              TEXT,
+			project_id           TEXT,
+			region               TEXT,
+			service_account_json TEXT,
+			selected_models      TEXT    DEFAULT NULL,
+			weight               INTEGER DEFAULT 10,
+			is_enabled           BOOLEAN DEFAULT 1,
+			status               TEXT    DEFAULT 'active',
+			error_count          INTEGER DEFAULT 0,
+			cooldown_until       DATETIME,
+			total_requests       INTEGER DEFAULT 0,
+			total_errors         INTEGER DEFAULT 0,
+			last_used_at         DATETIME,
+			created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (user_provider_id) REFERENCES user_providers(id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_pk_user_provider ON provider_keys(user_provider_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_pk_status        ON provider_keys(status, is_enabled);`,
 	}
 
 	for _, q := range queries {

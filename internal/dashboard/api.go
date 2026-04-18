@@ -51,6 +51,15 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	// --- 模型规格完整 CRUD ---
 	mux.HandleFunc("/api/v1/model-specs", h.handleModelSpecs)
 	mux.HandleFunc("/api/v1/model-specs/", h.handleModelSpecsWithID)
+
+	// --- 用户厂商配置 ---
+	mux.HandleFunc("/api/v1/user-providers", h.handleUserProviders)
+	mux.HandleFunc("/api/v1/user-providers/available", h.handleAvailableProviders)
+	mux.HandleFunc("/api/v1/user-providers/", h.handleUserProvidersWithID)
+
+	// --- 密钥池 ---
+	mux.HandleFunc("/api/v1/provider-keys", h.handleProviderKeys)
+	mux.HandleFunc("/api/v1/provider-keys/", h.handleProviderKeysWithID)
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -523,17 +532,24 @@ func (h *APIHandler) handleModelSpecs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandler) listModelSpecs(w http.ResponseWriter, r *http.Request) {
+	// COALESCE 处理所有可空列，防止 NULL->string/int Scan 返回错误后 continue 跳过所有行
 	query := `
-		SELECT m.id, m.model_id, m.model_name, m.tool_format, m.max_context,
-		       m.supports_thinking, m.supports_vision, m.supports_tools, m.supports_json,
-		       m.dsl_rules, m.capabilities,
-		       p.id AS provider_id, p.name AS provider_name, p.protocol
+		SELECT m.id, m.model_id, m.model_name,
+		       COALESCE(m.tool_format,    ''  ) AS tool_format,
+		       COALESCE(m.max_context,    0   ) AS max_context,
+		       COALESCE(m.supports_thinking, 0),
+		       COALESCE(m.supports_vision,   0),
+		       COALESCE(m.supports_tools,    0),
+		       COALESCE(m.supports_json,     0),
+		       COALESCE(m.dsl_rules,     ''  ) AS dsl_rules,
+		       COALESCE(m.capabilities,  ''  ) AS capabilities,
+		       p.id AS provider_id, p.name AS provider_name,
+		       COALESCE(p.protocol,      ''  ) AS protocol
 		FROM system_models m
 		JOIN system_providers p ON m.provider_id = p.id
 	`
 	args := []interface{}{}
 
-	// provider_id 现在是 TEXT
 	if pid := r.URL.Query().Get("provider_id"); pid != "" {
 		query += " WHERE m.provider_id = ?"
 		args = append(args, pid)
@@ -572,6 +588,7 @@ func (h *APIHandler) listModelSpecs(w http.ResponseWriter, r *http.Request) {
 			&t, &v, &tools, &j, &s.DSLRules, &s.Capabilities,
 			&s.ProviderID, &s.ProviderName, &s.Protocol,
 		); err != nil {
+			log.Printf("[listModelSpecs] scan error: %v", err)
 			continue
 		}
 		s.SupportsThinking = t == 1
