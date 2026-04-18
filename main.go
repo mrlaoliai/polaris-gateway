@@ -30,95 +30,113 @@ import (
 //go:embed ui/dist/*
 var staticFiles embed.FS
 
+// vfsWriterInterceptor 实现了 io.Writer 接口
+// 它在数据流向客户端的同时，按顺序同步将数据分片存入 VFS 物理文件
+type vfsWriterInterceptor struct {
+	traceID    string
+	startIndex int
+	sessionMgr *state.SessionManager
+	target     io.Writer
+}
+
+func (v *vfsWriterInterceptor) Write(p []byte) (n int, err error) {
+	// 1. 优先下发数据给客户端，保证交互实时性
+	n, err = v.target.Write(p)
+	if err != nil {
+		return n, err
+	}
+
+	// 2. 将数据片段存入 VFS (L2 存储)
+	_ = v.sessionMgr.SpillToVFS(v.traceID, v.startIndex, p)
+	v.startIndex++
+
+	return n, nil
+}
+
 func main() {
-	// 启动全局生命周期 Context
+	// 全局生命周期控制
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// 1. 初始化地基：双库分离
-	// primaryDB: 存放核心配置、账号、路由、配额（高频读取）
+	// 1. 初始化双库地基
+	// primaryDB: 存放核心配置、账号、路由、配额
 	primaryDB, err := database.InitDB("polaris.db")
 	if err != nil {
 		log.Fatalf("❌ 核心数据库初始化失败: %v", err)
 	}
 	defer primaryDB.Close()
 
-	// l2DB: 仅存放长对话片段的索引，具体重型 Payload 沉降到 VFS 文件系统
+	// l2DB: 存放长对话片段的物理路径索引
 	l2DB, err := database.InitDB("polaris_l2.db")
 	if err != nil {
 		log.Fatalf("❌ L2 索引库初始化失败: %v", err)
 	}
 	defer l2DB.Close()
 
-	// 2. 启动全局异步写入中台 (DB Coordinator)
-	// 彻底解决多协程并发写导致的 SQLite "database is locked" 问题
+	// 2. 启动全局异步写入中台 (消除 SQLite 锁竞争)
 	dbMgr := database.NewDBManager(primaryDB, l2DB)
 	dbMgr.StartWriterWorker(ctx)
 
-	// 3. 实例化核心组件
+	// 3. 实例化核心组件 (依赖注入)
 	dslEngine, _ := dsl.NewEngine()
 	router := orchestrator.NewRouter(primaryDB)
-	sentinel := orchestrator.NewSentinel(primaryDB, dbMgr)
-	guardian := middleware.NewGuardian(primaryDB, dbMgr)
+	sentinel := orchestrator.NewSentinel(primaryDB, dbMgr) // 内部应改用 dbMgr 更新状态
+	guardian := middleware.NewGuardian(primaryDB, dbMgr)   // 内部应改用 dbMgr 更新配额
 
-	// 实例化 Session 管理器，将大内容负载重定向到本地 VFS 目录
-	sessionMgr := state.NewSessionManager(primaryDB, "./data/vfs")
+	// Session 管理器：使用 L2 库记录索引，内容存入物理目录
+	sessionMgr := state.NewSessionManager(l2DB, dbMgr, "./data/vfs")
 
-	log.Println("🛰️ Polaris Gateway v2.0 启动成功")
-	log.Println("运行模式: [Dual-DB] [Async-Writer] [VFS-Storage]")
+	log.Println("🛰️ Polaris Gateway v2.0 运行中...")
 
-	// 4. 启动后台自愈拨测协程 (定期检查 Key 存活性)
+	// 后台自愈拨测
 	go sentinel.Start(ctx)
 
-	// 5. 组装 HTTP 路由
+	// 4. 组装 HTTP 路由
 	mux := http.NewServeMux()
-
-	// 挂载控制台 (处理 SPA 路由回退，支持 History 模式刷新)
 	mux.Handle("/dashboard/", http.StripPrefix("/dashboard/", dashboard.WebUIHandler(staticFiles)))
 
-	// 核心逻辑处理器：处理 Chat Completions 请求
+	// 核心逻辑处理器
 	coreHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// A. 读取并预解析 Payload
+		// A. 生成对话追踪 ID 与初始索引
+		traceID := fmt.Sprintf("tx-%d", time.Now().UnixNano())
+		chunkIndex := 0
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "Read body failed", http.StatusBadRequest)
 			return
 		}
 
+		// B. [备份] 将用户提问原样存入 VFS
+		_ = sessionMgr.SpillToVFS(traceID, chunkIndex, body)
+		chunkIndex++
+
 		var peek struct {
 			Model string `json:"model"`
 		}
 		_ = json.Unmarshal(body, &peek)
 
-		// B. 智能路由决策 (基于主库)
+		// C. 路由决策与 DSL 动态重写
 		target, err := router.Route(peek.Model)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
 
-		// C. [动态评估] DSL 规则改写物理映射
 		if target.DSLRules != "" {
 			var inputMap map[string]interface{}
 			_ = json.Unmarshal(body, &inputMap)
 			if result, err := dslEngine.ExecuteTransform(target.DSLRules, inputMap); err == nil {
-				// 如果 DSL 命中并返回新模型名称，则执行强制覆盖
 				if newModel, ok := result.(string); ok && newModel != "" {
-					log.Printf("[DSL] 物理路由动态改写: %s -> %s", target.ModelName, newModel)
 					target.ModelName = newModel
 				}
 			}
 		}
 
-		// D. 协议翻译器初始化 (默认适配 Claude Code 等 Anthropic 协议客户端)
+		// D. 协议适配与物理执行器实例化
 		trans := transformer.NewAnthropicTransformer(target.ModelName)
-		stdReq, err := trans.TransformRequest(body)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Protocol Transform Error: %v", err), http.StatusBadRequest)
-			return
-		}
+		stdReq, _ := trans.TransformRequest(body)
 
-		// E. 物理厂商执行器路由
 		var executor provider.Executor
 		switch target.Protocol {
 		case "anthropic":
@@ -126,79 +144,74 @@ func main() {
 		case "google", "vertex":
 			executor = provider.NewGoogleExecutor(target.APIKey, target.BaseURL, target.Protocol == "vertex")
 		default:
-			http.Error(w, "Unsupported physical protocol", http.StatusInternalServerError)
+			http.Error(w, "Unsupported Protocol", 500)
 			return
 		}
 
-		// F. 执行代理请求并实时重写响应
+		// E. 执行代理并拦截响应流
 		if stdReq.Stream {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Connection", "keep-alive")
 
 			physicalStream, err := executor.ExecuteStream(r.Context(), stdReq)
 			if err != nil {
-				// 通过 SSE 格式向客户端下发错误信息
 				fmt.Fprintf(w, "event: error\ndata: {\"error\":\"%v\"}\n\n", err)
 				return
 			}
 			defer physicalStream.Close()
 
-			// 执行流式转换 (内部自动处理 Heartbeat 注入与 Zero-Poetry 清洗)
-			_ = trans.TransformStream(r.Context(), physicalStream, w)
-		} else {
-			// 非流式转发处理
-			resp, err := executor.Execute(r.Context(), stdReq)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadGateway)
-				return
+			// 拦截器集成：数据在发送给客户端的同时，自动分片沉降到 VFS
+			vfsInterceptor := &vfsWriterInterceptor{
+				traceID:    traceID,
+				startIndex: chunkIndex,
+				sessionMgr: sessionMgr,
+				target:     w,
 			}
+
+			_ = trans.TransformStream(r.Context(), physicalStream, vfsInterceptor)
+		} else {
+			// 非流式转发
+			resp, _ := executor.Execute(r.Context(), stdReq)
+
+			// 备份完整响应
+			_ = sessionMgr.SpillToVFS(traceID, chunkIndex, resp)
+
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(resp)
 		}
 
-		// G. [核心改进] 异步更新配额消耗
-		// 通过 dbMgr 将写操作推入队列，确保请求主路径以毫秒级速度返回
+		// F. 异步记录配额消耗
 		if keyID, ok := r.Context().Value(middleware.GatewayKeyID).(int); ok {
 			dbMgr.AsyncWrite("UPDATE gateway_keys SET used_tokens = used_tokens + ? WHERE id = ?", 1, keyID)
 		}
-
-		// H. 审计与 L2 溢出存储 (可选调用)
-		_ = sessionMgr
 	})
 
-	// 挂载 Guardian 鉴权中间件，并注册 API 路径
-	// 兼容 OpenAI 标准路径与 Anthropic 原生路径
+	// 注册 API 接口
 	protectedHandler := guardian.AuthAndQuotaMiddleware(coreHandler)
 	mux.Handle("/v1/chat/completions", protectedHandler)
 	mux.Handle("/v1/messages", protectedHandler)
 
-	// 6. 配置并启动 HTTP 服务
+	// 5. 启动 HTTP 服务
 	server := &http.Server{
 		Addr:         ":8080",
 		Handler:      mux,
-		ReadTimeout:  15 * time.Minute, // 适配 2026 年长时思维链推理
+		ReadTimeout:  15 * time.Minute,
 		WriteTimeout: 15 * time.Minute,
 	}
 
 	go func() {
-		log.Println("🚀 网关服务监听在: http://0.0.0.0:8080")
+		log.Println("🚀 服务监听中: http://0.0.0.0:8080")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("❌ 监听失败: %v", err)
+			log.Fatal(err)
 		}
 	}()
 
-	// 7. 监听系统信号，实现优雅停机
+	// 优雅停机
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("⚠️ 接收到停机指令，正在清理资源...")
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer shutdownCancel()
-
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("❌ 服务强制关闭: %v", err)
-	}
+	log.Println("⚠️ 停机信号接收，正在执行清理...")
+	_ = server.Shutdown(context.Background())
 	log.Println("✅ Polaris 已安全退出")
 }
