@@ -181,9 +181,10 @@ func (h *APIHandler) handleAccounts(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandler) listAccounts(w http.ResponseWriter, _ *http.Request) {
 	rows, err := h.db.Query(`
-		SELECT a.id, p.name AS provider_name, a.api_key, a.priority, a.status
+		SELECT a.id, COALESCE(p.name, a.provider_id) AS provider_name,
+		       a.api_key, a.priority, a.status
 		FROM accounts a
-		JOIN providers p ON a.provider_id = p.id
+		LEFT JOIN system_providers p ON a.provider_id = p.id
 		ORDER BY a.priority DESC
 	`)
 	if err != nil {
@@ -215,9 +216,10 @@ func (h *APIHandler) listAccounts(w http.ResponseWriter, _ *http.Request) {
 
 func (h *APIHandler) createAccount(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ProviderID int    `json:"provider_id"`
+		ProviderID string `json:"provider_id"` // TEXT，如 "openai"
 		APIKey     string `json:"api_key"`
 		Priority   int    `json:"priority"`
+		Label      string `json:"label"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid JSON body")
@@ -232,8 +234,8 @@ func (h *APIHandler) createAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := h.db.Exec(
-		"INSERT INTO accounts (provider_id, api_key, priority, status) VALUES (?, ?, ?, 'active')",
-		body.ProviderID, body.APIKey, body.Priority,
+		"INSERT INTO accounts (provider_id, api_key, priority, status, label) VALUES (?, ?, ?, 'active', ?)",
+		body.ProviderID, body.APIKey, body.Priority, body.Label,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -278,15 +280,15 @@ func (h *APIHandler) handleRouting(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandler) listRouting(w http.ResponseWriter, _ *http.Request) {
 	rows, err := h.db.Query(`
-		SELECT 
+		SELECT
 			rr.id,
 			rr.in_model,
 			tm.model_name  AS target_model,
 			COALESCE(fm.model_name, '') AS fallback_model,
 			CASE WHEN tm.dsl_rules IS NOT NULL AND tm.dsl_rules != '' THEN 1 ELSE 0 END AS has_dsl
 		FROM routing_rules rr
-		JOIN model_specs tm ON rr.target_spec_id = tm.id
-		LEFT JOIN model_specs fm ON rr.fallback_spec_id = fm.id
+		JOIN system_models tm ON rr.target_spec_id = tm.id
+		LEFT JOIN system_models fm ON rr.fallback_spec_id = fm.id
 		ORDER BY rr.id DESC
 	`)
 	if err != nil {
@@ -462,10 +464,11 @@ func (h *APIHandler) handleProviders(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandler) listProviders(w http.ResponseWriter) {
 	rows, err := h.db.Query(`
-		SELECT p.id, p.name, p.protocol_type, p.base_url,
+		SELECT p.id, p.name, p.protocol, p.url_template, p.auth_type,
+		       p.conn_timeout, p.read_timeout, p.capabilities,
 		       COUNT(m.id) AS model_count
-		FROM providers p
-		LEFT JOIN model_specs m ON m.provider_id = p.id
+		FROM system_providers p
+		LEFT JOIN system_models m ON m.provider_id = p.id
 		GROUP BY p.id
 		ORDER BY p.id ASC
 	`)
@@ -476,16 +479,23 @@ func (h *APIHandler) listProviders(w http.ResponseWriter) {
 	defer rows.Close()
 
 	type ProviderRow struct {
-		ID           int    `json:"id"`
+		ID           string `json:"id"`
 		Name         string `json:"name"`
-		ProtocolType string `json:"protocol_type"`
-		BaseURL      string `json:"base_url"`
+		Protocol     string `json:"protocol"`
+		URLTemplate  string `json:"url_template"`
+		AuthType     string `json:"auth_type"`
+		ConnTimeout  int    `json:"conn_timeout"`
+		ReadTimeout  int    `json:"read_timeout"`
+		Capabilities string `json:"capabilities"`
 		ModelCount   int    `json:"model_count"`
 	}
 	var providers []ProviderRow
 	for rows.Next() {
 		var p ProviderRow
-		if err := rows.Scan(&p.ID, &p.Name, &p.ProtocolType, &p.BaseURL, &p.ModelCount); err != nil {
+		if err := rows.Scan(
+			&p.ID, &p.Name, &p.Protocol, &p.URLTemplate, &p.AuthType,
+			&p.ConnTimeout, &p.ReadTimeout, &p.Capabilities, &p.ModelCount,
+		); err != nil {
 			continue
 		}
 		providers = append(providers, p)
@@ -513,20 +523,20 @@ func (h *APIHandler) handleModelSpecs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandler) listModelSpecs(w http.ResponseWriter, r *http.Request) {
-
 	query := `
-		SELECT m.id, m.model_name, m.supports_thinking, m.supports_vision, m.dsl_rules,
-		       p.id AS provider_id, p.name AS provider_name, p.protocol_type
-		FROM model_specs m
-		JOIN providers p ON m.provider_id = p.id
+		SELECT m.id, m.model_id, m.model_name, m.tool_format, m.max_context,
+		       m.supports_thinking, m.supports_vision, m.supports_tools, m.supports_json,
+		       m.dsl_rules, m.capabilities,
+		       p.id AS provider_id, p.name AS provider_name, p.protocol
+		FROM system_models m
+		JOIN system_providers p ON m.provider_id = p.id
 	`
 	args := []interface{}{}
 
+	// provider_id 现在是 TEXT
 	if pid := r.URL.Query().Get("provider_id"); pid != "" {
-		if n, err := strconv.Atoi(pid); err == nil {
-			query += " WHERE m.provider_id = ?"
-			args = append(args, n)
-		}
+		query += " WHERE m.provider_id = ?"
+		args = append(args, pid)
 	}
 	query += " ORDER BY p.name ASC, m.model_name ASC"
 
@@ -539,26 +549,35 @@ func (h *APIHandler) listModelSpecs(w http.ResponseWriter, r *http.Request) {
 
 	type SpecRow struct {
 		ID               int    `json:"id"`
+		ModelID          string `json:"model_id"`
 		ModelName        string `json:"model_name"`
+		ToolFormat       string `json:"tool_format"`
+		MaxContext       int    `json:"max_context"`
 		SupportsThinking bool   `json:"supports_thinking"`
 		SupportsVision   bool   `json:"supports_vision"`
+		SupportsTools    bool   `json:"supports_tools"`
+		SupportsJSON     bool   `json:"supports_json"`
 		DSLRules         string `json:"dsl_rules"`
-		ProviderID       int    `json:"provider_id"`
+		Capabilities     string `json:"capabilities"`
+		ProviderID       string `json:"provider_id"`
 		ProviderName     string `json:"provider_name"`
-		ProtocolType     string `json:"protocol_type"`
+		Protocol         string `json:"protocol"`
 	}
 	var specs []SpecRow
 	for rows.Next() {
 		var s SpecRow
-		var thinkingInt, visionInt int
+		var t, v, tools, j int
 		if err := rows.Scan(
-			&s.ID, &s.ModelName, &thinkingInt, &visionInt, &s.DSLRules,
-			&s.ProviderID, &s.ProviderName, &s.ProtocolType,
+			&s.ID, &s.ModelID, &s.ModelName, &s.ToolFormat, &s.MaxContext,
+			&t, &v, &tools, &j, &s.DSLRules, &s.Capabilities,
+			&s.ProviderID, &s.ProviderName, &s.Protocol,
 		); err != nil {
 			continue
 		}
-		s.SupportsThinking = thinkingInt == 1
-		s.SupportsVision = visionInt == 1
+		s.SupportsThinking = t == 1
+		s.SupportsVision = v == 1
+		s.SupportsTools = tools == 1
+		s.SupportsJSON = j == 1
 		specs = append(specs, s)
 	}
 	if specs == nil {

@@ -7,8 +7,8 @@ server:
   write_timeout: 15     # 分钟
 
 database:
-  primary: "polaris.db"
-  l2: "polaris_l2.db"
+  primary: "./data/polaris.db"
+  l2: "./data/polaris_l2.db"
 
 storage:
   vfs_path: "./data/vfs"
