@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/mrlaoliai/polaris-gateway/internal/bridge/schema"
 )
@@ -15,7 +16,7 @@ type GoogleExecutor struct {
 	APIKey      string
 	BaseURL     string
 	IsVertex    bool
-	BearerToken string // Vertex 可能需要 OAuth2 令牌
+	BearerToken string
 }
 
 func NewGoogleExecutor(apiKey, baseURL string, isVertex bool) *GoogleExecutor {
@@ -26,29 +27,83 @@ func NewGoogleExecutor(apiKey, baseURL string, isVertex bool) *GoogleExecutor {
 	}
 }
 
-func (e *GoogleExecutor) ExecuteStream(ctx context.Context, stdReq *schema.StandardRequest) (io.ReadCloser, error) {
-	// Gemini/Vertex 的内容封装逻辑
-	// 即使接口地址不同，内容体我们按你确认的“一致性”来处理
-	payload, _ := json.Marshal(map[string]interface{}{
-		"contents": []map[string]interface{}{
-			{
-				"role": "user",
-				"parts": []map[string]interface{}{
-					{"text": stdReq.Messages[len(stdReq.Messages)-1].Content},
-				},
-			},
-		},
-		// 对应 V3 中的 Thinking 支持
-		"generationConfig": map[string]interface{}{
-			"thinking_config": map[string]interface{}{"include_thoughts": stdReq.Thinking},
-		},
-	})
+// buildPayload 将标准请求转换为 Gemini 的层级结构
+func (e *GoogleExecutor) buildPayload(stdReq *schema.StandardRequest) ([]byte, error) {
+	var systemContent string
+	var contents []map[string]interface{}
 
-	// 处理接口地址差异
+	// 1. 上下文与角色映射 (Gemini 仅支持 user 和 model 角色)
+	for _, msg := range stdReq.Messages {
+		if msg.Role == "system" {
+			systemContent += msg.Content + "\n"
+			continue
+		}
+
+		role := "user"
+		if msg.Role == "assistant" {
+			role = "model"
+		}
+
+		contents = append(contents, map[string]interface{}{
+			"role": role,
+			"parts": []map[string]interface{}{
+				{"text": msg.Content},
+			},
+		})
+	}
+
+	payloadMap := map[string]interface{}{
+		"contents": contents,
+	}
+
+	// 2. 注入 System Instruction
+	if systemContent != "" {
+		payloadMap["system_instruction"] = map[string]interface{}{
+			"parts": []map[string]interface{}{
+				{"text": strings.TrimSpace(systemContent)},
+			},
+		}
+	}
+
+	// 3. 注入工具 (Function Declarations)
+	if len(stdReq.Tools) > 0 {
+		var funcs []map[string]interface{}
+		for _, tool := range stdReq.Tools {
+			funcs = append(funcs, map[string]interface{}{
+				"name":        tool.Function.Name,
+				"description": tool.Function.Description,
+				"parameters":  tool.Function.Parameters,
+			})
+		}
+		payloadMap["tools"] = []map[string]interface{}{
+			{"function_declarations": funcs},
+		}
+	}
+
+	// 4. 思维链支持 (基于 2026 年 Gemini 规范占位)
+	if stdReq.Thinking {
+		payloadMap["generationConfig"] = map[string]interface{}{
+			"thinking_config": map[string]interface{}{"include_thoughts": true},
+		}
+	}
+
+	return json.Marshal(payloadMap)
+}
+
+func (e *GoogleExecutor) ExecuteStream(ctx context.Context, stdReq *schema.StandardRequest) (io.ReadCloser, error) {
+	payload, err := e.buildPayload(stdReq)
+	if err != nil {
+		return nil, err
+	}
+
+	// Gemini 流式请求通常使用 /streamGenerateContent?alt=sse 后缀
 	finalURL := e.BaseURL
 	if !e.IsVertex {
-		// 标准 Gemini 模式通常在 URL 中带 Key
-		finalURL = fmt.Sprintf("%s?key=%s", e.BaseURL, e.APIKey)
+		sep := "?"
+		if strings.Contains(finalURL, "?") {
+			sep = "&"
+		}
+		finalURL = fmt.Sprintf("%s%skey=%s", finalURL, sep, e.APIKey)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", finalURL, bytes.NewBuffer(payload))
@@ -57,8 +112,47 @@ func (e *GoogleExecutor) ExecuteStream(ctx context.Context, stdReq *schema.Stand
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	if e.IsVertex && e.BearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+e.BearerToken)
+	}
 
-	// 如果是 Vertex，可能需要注入 Bearer Token
+	httpClient := &http.Client{Timeout: 0}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("Google API 错误 (%d): %s", resp.StatusCode, string(body))
+	}
+
+	return resp.Body, nil
+}
+
+func (e *GoogleExecutor) Execute(ctx context.Context, stdReq *schema.StandardRequest) ([]byte, error) {
+	payload, err := e.buildPayload(stdReq)
+	if err != nil {
+		return nil, err
+	}
+
+	finalURL := e.BaseURL
+	if !e.IsVertex {
+		sep := "?"
+		if strings.Contains(finalURL, "?") {
+			sep = "&"
+		}
+		// 非流式通常省略 stream 后缀，这里简单处理
+		finalURL = fmt.Sprintf("%s%skey=%s", finalURL, sep, e.APIKey)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", finalURL, bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
 	if e.IsVertex && e.BearerToken != "" {
 		req.Header.Set("Authorization", "Bearer "+e.BearerToken)
 	}
@@ -68,10 +162,12 @@ func (e *GoogleExecutor) ExecuteStream(ctx context.Context, stdReq *schema.Stand
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 
-	return resp.Body, nil
-}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("Google API 错误 (%d): %s", resp.StatusCode, string(body))
+	}
 
-func (e *GoogleExecutor) Execute(ctx context.Context, req *schema.StandardRequest) ([]byte, error) {
-	return nil, nil
+	return io.ReadAll(resp.Body)
 }

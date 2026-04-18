@@ -1,50 +1,58 @@
-// 内部使用：internal/bridge/transformer/anthropic.go
 package transformer
 
 import (
-	"bytes"
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/mrlaoliai/polaris-gateway/internal/bridge/schema"
+	"github.com/mrlaoliai/polaris-gateway/pkg/middleware"
 )
 
-// AnthropicTransformer 处理 Claude API 与底层物理 API 的转换
+// AnthropicTransformer 处理 Claude API 客户端与网关标准协议的双向转换
 type AnthropicTransformer struct {
 	targetModel string
+	mcpRouter   *MCPRouter
 }
 
 func NewAnthropicTransformer(target string) *AnthropicTransformer {
-	return &AnthropicTransformer{targetModel: target}
+	return &AnthropicTransformer{
+		targetModel: target,
+		mcpRouter:   NewMCPRouter(),
+	}
 }
 
-// TransformRequest：Anthropic 格式 -> 标准化格式 -> OpenAI 格式 (交由 Executor 调用)
+// TransformRequest: 接收 Claude Code 客户端发来的原生 JSON，转为标准请求
 func (t *AnthropicTransformer) TransformRequest(payload []byte) (*schema.StandardRequest, error) {
-	// 1. 解析 Claude 原生结构 (简化版结构体声明)
 	var claudeReq struct {
 		Model    string `json:"model"`
+		System   string `json:"system"`
 		Messages []struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"messages"`
-		System string `json:"system"`
-		Stream bool   `json:"stream"`
+		Stream bool `json:"stream"`
+		Tools  []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			InputSchema any    `json:"input_schema"`
+		} `json:"tools"`
 	}
 
 	if err := json.Unmarshal(payload, &claudeReq); err != nil {
 		return nil, fmt.Errorf("解析 Anthropic 协议失败: %w", err)
 	}
 
-	// 2. 映射到 Polaris 标准规范
 	stdReq := &schema.StandardRequest{
 		Model:    t.targetModel, // 物理路由映射，例如 deepseek-v4-reasoning
 		Stream:   claudeReq.Stream,
-		Thinking: true, // 默认开启以支持长时推理对齐
+		Thinking: true, // 强制开启思维链支持
 	}
 
-	// 处理 System Prompt 的协议差异 (Anthropic 独立字段 -> OpenAI 数组首项)
+	// 处理 System Prompt
 	if claudeReq.System != "" {
 		stdReq.Messages = append(stdReq.Messages, schema.Message{
 			Role:    "system",
@@ -52,6 +60,7 @@ func (t *AnthropicTransformer) TransformRequest(payload []byte) (*schema.Standar
 		})
 	}
 
+	// 处理历史对话
 	for _, msg := range claudeReq.Messages {
 		stdReq.Messages = append(stdReq.Messages, schema.Message{
 			Role:    msg.Role,
@@ -59,55 +68,129 @@ func (t *AnthropicTransformer) TransformRequest(payload []byte) (*schema.Standar
 		})
 	}
 
-	// 此处后续可挂载 Dynamic Tool Pruning 逻辑
+	// 处理 MCP 工具挂载
+	for _, tool := range claudeReq.Tools {
+		stdReq.Tools = append(stdReq.Tools, schema.Tool{
+			Type: "function",
+			Function: struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+				Parameters  any    `json:"parameters"`
+			}{
+				Name:        tool.Name,
+				Description: tool.Description,
+				Parameters:  tool.InputSchema,
+			},
+		})
+	}
+
 	return stdReq, nil
 }
 
-// TransformStream：物理流 -> 协议重写/缓冲 -> Claude SSE 流
+// TransformStream: 核心状态机。读取物理模型流 -> 触发过滤与 L2 缓冲 -> 转换为 Claude SSE 流
 func (t *AnthropicTransformer) TransformStream(ctx context.Context, physicalStream io.Reader, clientStream io.Writer) error {
-	// 缓冲区初始化
-	buffer := new(bytes.Buffer)
-	var totalChunkSize int
+	scanner := bufio.NewScanner(physicalStream)
 
-	// TODO: 实例化 internal/state 的 SessionManager 用于 L2 溢出
+	// 1. 下发 Anthropic 握手包
+	messageStart := fmt.Sprintf("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_polaris_trace\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"%s\",\"content\":[]}}\n\n", t.targetModel)
+	_, _ = clientStream.Write([]byte(messageStart))
 
-	// 模拟流式读取物理模型响应 (例如 DeepSeek)
-	//decoder := json.NewDecoder(physicalStream)
-	for {
+	var inThinkingBlock bool
+	var inTextBlock bool
+	var blockIndex int
+
+	// 实例化 Zero-Poetry 过滤器
+	zpFilter := middleware.NewZeroPoetryProcessor()
+
+	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			// 1. 读取物理流 (解析 OpenAI 规范的 delta)
-			// var physicalChunk map[string]any
-			// err := decoder.Decode(&physicalChunk) ...
+		}
 
-			// 2. L2 溢出检测逻辑 (State-in-DB)
-			chunkSize := 1024 // 假设当前块大小
-			totalChunkSize += chunkSize
-			if totalChunkSize > 128*1024 { // 超过 128KB 阈值
-				// 触发 L2 SQLite 溢出
-				// stateManager.SpillToWAL(traceID, buffer.Bytes())
-				buffer.Reset() // 清空内存中的 L1 缓冲
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		dataStr := strings.TrimPrefix(line, "data: ")
+		if dataStr == "[DONE]" {
+			break
+		}
+
+		// 解析 OpenAI/DeepSeek 兼容的 Delta 数据
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					ReasoningContent string `json:"reasoning_content"`
+					Content          string `json:"content"`
+				} `json:"delta"`
+				FinishReason *string `json:"finish_reason"`
+			} `json:"choices"`
+		}
+
+		if err := json.Unmarshal([]byte(dataStr), &chunk); err != nil || len(chunk.Choices) == 0 {
+			continue
+		}
+
+		delta := chunk.Choices[0].Delta
+
+		// 2. 拦截并处理 "影子签名" (Thinking Session)
+		if delta.ReasoningContent != "" {
+			if !inThinkingBlock {
+				startEvent := fmt.Sprintf("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":%d,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n", blockIndex)
+				clientStream.Write([]byte(startEvent))
+				inThinkingBlock = true
 			}
 
-			// 3. 影子签名机制 (Thinking Signature)
-			// 针对 Claude Code，将 DeepSeek 的推理内容包装为 Anthropic 的 thinking 事件
-			claudeEvent := `event: content_block_delta
-data: {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "这是来自底层物理模型的伪装推理过程..."}}
+			safeThinking, _ := json.Marshal(delta.ReasoningContent)
+			deltaEvent := fmt.Sprintf("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":%d,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":%s}}\n\n", blockIndex, string(safeThinking))
+			clientStream.Write([]byte(deltaEvent))
+		}
 
-`
-			// 4. 执行 Zero-Poetry 正则过滤 (剔除 AI 口癖)
-			// claudeEvent = middleware.ApplyZeroPoetryFilter(claudeEvent)
-
-			// 5. 输出至客户端
-			_, err := clientStream.Write([]byte(claudeEvent))
-			if err != nil {
-				return err
+		// 3. 处理常规回复内容
+		if delta.Content != "" {
+			// 如果刚刚结束 Thinking，需要先闭合思维块
+			if inThinkingBlock {
+				stopEvent := fmt.Sprintf("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", blockIndex)
+				clientStream.Write([]byte(stopEvent))
+				inThinkingBlock = false
+				blockIndex++
 			}
 
-			// 模拟流结束
-			return nil
+			if !inTextBlock {
+				startEvent := fmt.Sprintf("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":%d,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n", blockIndex)
+				clientStream.Write([]byte(startEvent))
+				inTextBlock = true
+			}
+
+			// 执行 Zero-Poetry 口癖清洗
+			cleanText := zpFilter.Process(delta.Content)
+			if cleanText != "" {
+				safeContent, _ := json.Marshal(cleanText)
+				deltaEvent := fmt.Sprintf("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":%d,\"delta\":{\"type\":\"text_delta\",\"text\":%s}}\n\n", blockIndex, string(safeContent))
+				clientStream.Write([]byte(deltaEvent))
+			}
+		}
+
+		// 4. 处理终结状态
+		if chunk.Choices[0].FinishReason != nil {
+			if inThinkingBlock || inTextBlock {
+				stopEvent := fmt.Sprintf("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", blockIndex)
+				clientStream.Write([]byte(stopEvent))
+			}
+
+			reason := *chunk.Choices[0].FinishReason
+			anthropicReason := "end_turn"
+			if reason == "tool_calls" {
+				anthropicReason = "tool_use"
+			}
+
+			msgStop := fmt.Sprintf("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"%s\",\"stop_sequence\":null}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n", anthropicReason)
+			clientStream.Write([]byte(msgStop))
 		}
 	}
+
+	return scanner.Err()
 }
