@@ -1,5 +1,4 @@
-// 基础中间件：pkg/middleware/guardian.go
-// 作者：mrlaoliai
+// pkg/middleware/guardian.go
 package middleware
 
 import (
@@ -7,6 +6,13 @@ import (
 	"database/sql"
 	"net/http"
 	"strings"
+)
+
+// 定义未导出的自定义类型作为 Context Key，彻底杜绝 SA1029 碰撞风险
+type contextKey string
+
+const (
+	gatewayKeyID contextKey = "gateway_key_id"
 )
 
 type Guardian struct {
@@ -17,7 +23,6 @@ func NewGuardian(db *sql.DB) *Guardian {
 	return &Guardian{db: db}
 }
 
-// AuthAndQuotaMiddleware 拦截器：校验逻辑 Key 并检查额度
 func (g *Guardian) AuthAndQuotaMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
@@ -28,7 +33,6 @@ func (g *Guardian) AuthAndQuotaMiddleware(next http.HandlerFunc) http.HandlerFun
 
 		logicalKey := strings.TrimPrefix(authHeader, "Bearer ")
 
-		// State-in-DB: 查询网关凭证
 		var keyID int
 		var dailyLimit, usedTokens int
 		err := g.db.QueryRow(
@@ -44,14 +48,13 @@ func (g *Guardian) AuthAndQuotaMiddleware(next http.HandlerFunc) http.HandlerFun
 			return
 		}
 
-		// 额度校验 (-1 代表无限)
 		if dailyLimit != -1 && usedTokens >= dailyLimit {
 			http.Error(w, "Daily Quota Exceeded", http.StatusTooManyRequests)
 			return
 		}
 
-		// 将 Key ID 注入上下文，供后续审计 (usage_stats) 扣费使用
-		ctx := context.WithValue(r.Context(), "gateway_key_id", keyID)
+		// 修复 staticcheck SA1029: 使用自定义类型的常量作为 Key
+		ctx := context.WithValue(r.Context(), gatewayKeyID, keyID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }
