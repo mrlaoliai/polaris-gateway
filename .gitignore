@@ -9,3 +9,4 @@ polaris_l2.db-wal
 polaris.db-shm
 .gitignore
 polaris.db-wal
+data/
