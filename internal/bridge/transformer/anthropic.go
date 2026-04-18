@@ -1,5 +1,6 @@
 // 内部使用：internal/bridge/transformer/anthropic.go
 // 作者：mrlaoliai
+// 设计哲学：协议转换中台，支持 Thinking 过程流式注入，采用 Sticky Error 模式满足 Linter
 package transformer
 
 import (
@@ -48,8 +49,7 @@ func (t *AnthropicTransformer) TransformRequest(payload []byte) (*schema.Standar
 		return nil, err
 	}
 
-	// 1. 集成多模态降级检查
-	processedMsgs, _ := t.transcoder.ProcessMessages(claudeReq.Messages, false) // 假设目标模型不支持视觉
+	processedMsgs, _ := t.transcoder.ProcessMessages(claudeReq.Messages, false)
 
 	stdReq := &schema.StandardRequest{
 		Model:    t.targetModel,
@@ -77,7 +77,6 @@ func (t *AnthropicTransformer) TransformRequest(payload []byte) (*schema.Standar
 }
 
 func (t *AnthropicTransformer) TransformStream(ctx context.Context, physicalStream io.Reader, clientStream io.Writer) error {
-	// [深度集成] 1. 初始化并启动心跳注入器 (SSE 线程安全)
 	injector := heartbeat.NewInjector(clientStream, 15*time.Second, "anthropic")
 	injector.Start(ctx)
 	defer injector.Stop()
@@ -85,9 +84,11 @@ func (t *AnthropicTransformer) TransformStream(ctx context.Context, physicalStre
 	scanner := bufio.NewScanner(physicalStream)
 	zpFilter := middleware.NewZeroPoetryProcessor()
 
-	// 握手包
+	// 1. 发送握手包
 	msgStart := fmt.Sprintf("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"polaris_tx\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"%s\",\"content\":[]}}\n\n", t.targetModel)
-	_, _ = injector.Write([]byte(msgStart))
+	if _, err := injector.Write([]byte(msgStart)); err != nil {
+		return err
+	}
 
 	var inThinking, inText bool
 	var blockIndex int
@@ -114,45 +115,74 @@ func (t *AnthropicTransformer) TransformStream(ctx context.Context, physicalStre
 
 		delta := chunk.Choices[0].Delta
 
-		// Thinking 块
+		// 2. Thinking 块处理
 		if delta.ReasoningContent != "" {
 			if !inThinking {
-				injector.Write([]byte(fmt.Sprintf("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":%d,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n", blockIndex)))
+				msg := fmt.Sprintf("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":%d,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n", blockIndex)
+				if _, err := injector.Write([]byte(msg)); err != nil {
+					return err
+				}
 				inThinking = true
 			}
 			safeT, _ := json.Marshal(delta.ReasoningContent)
-			injector.Write([]byte(fmt.Sprintf("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":%d,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":%s}}\n\n", blockIndex, string(safeT))))
+			msg := fmt.Sprintf("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":%d,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":%s}}\n\n", blockIndex, string(safeT))
+			if _, err := injector.Write([]byte(msg)); err != nil {
+				return err
+			}
 		}
 
-		// Text 块
+		// 3. Text 块处理
 		if delta.Content != "" {
 			if inThinking {
-				injector.Write([]byte(fmt.Sprintf("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", blockIndex)))
+				msg := fmt.Sprintf("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", blockIndex)
+				if _, err := injector.Write([]byte(msg)); err != nil {
+					return err
+				}
 				inThinking = false
 				blockIndex++
 			}
 			if !inText {
-				injector.Write([]byte(fmt.Sprintf("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":%d,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n", blockIndex)))
+				msg := fmt.Sprintf("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":%d,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n", blockIndex)
+				if _, err := injector.Write([]byte(msg)); err != nil {
+					return err
+				}
 				inText = true
 			}
 			clean := zpFilter.Process(delta.Content)
 			if clean != "" {
 				safeC, _ := json.Marshal(clean)
-				injector.Write([]byte(fmt.Sprintf("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":%d,\"delta\":{\"type\":\"text_delta\",\"text\":%s}}\n\n", blockIndex, string(safeC))))
+				msg := fmt.Sprintf("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":%d,\"delta\":{\"type\":\"text_delta\",\"text\":%s}}\n\n", blockIndex, string(safeC))
+				if _, err := injector.Write([]byte(msg)); err != nil {
+					return err
+				}
 			}
 		}
 
-		// 终结逻辑
+		// 4. 终结逻辑
 		if chunk.Choices[0].FinishReason != nil {
 			if inThinking || inText {
-				injector.Write([]byte(fmt.Sprintf("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", blockIndex)))
+				msg := fmt.Sprintf("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", blockIndex)
+				if _, err := injector.Write([]byte(msg)); err != nil {
+					return err
+				}
 			}
 			reason := "end_turn"
 			if *chunk.Choices[0].FinishReason == "tool_calls" {
 				reason = "tool_use"
 			}
-			injector.Write([]byte(fmt.Sprintf("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"%s\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n", reason)))
+			msg := fmt.Sprintf("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"%s\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n", reason)
+			if _, err := injector.Write([]byte(msg)); err != nil {
+				return err
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 	}
-	return scanner.Err()
+
+	// 最终检查 Injector 捕获的粘性错误
+	return injector.Err()
 }
