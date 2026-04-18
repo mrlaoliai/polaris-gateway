@@ -13,6 +13,9 @@
 
 ## ✨ 核心特性
 
+* **物理执行器深度解耦 (Physical Executor Decoupling)** **: 厂商逻辑隔离：将 Google AI Studio 与 Google Cloud Vertex AI 彻底拆分为独立 Provider。支持不同维度的认证流（API Key 注入 vs. OAuth2 握手）。
+* **自适应动作映射** **: 网关自动根据客户端 stream 参数，在后端实时切换 :streamGenerateContent 与 :generateContent，实现配置层面的“零感知”切换。
+
 * **Bifrost 2.0 语义流引擎** :
 * **MCP 原生桥接** **: 自动执行 Model Context Protocol 工具调用与目标协议的降级转换 **^^。
 * **思维链签名 (Thinking Signature)** **: 为异构模型生成的推理块注入“影子签名”，维持客户端（如 Claude Code）的推理连续性 **^^。
@@ -24,6 +27,8 @@
 * **高性能存储** :
 * **L2 磁盘溢出** **: 当推理块或上下文累积超过阈值时，自动由内存溢出至磁盘缓存，防止 OOM **^^。
 
+* **异步状态机与存储** • DB-Writer 中台：采用单向 Channel 串行化所有数据库写操作，完美解决 SQLite 在超高并发下的锁竞争（Database Locked）问题。• L2 Spiller (磁盘溢出)：当推理上下文超过内存阈值时，自动溢出至 VFS (虚拟文件系统)，确保系统在极端压力下不会发生 OOM。
+
 ## 🏗️ 系统架构
 
 **系统采用四层逻辑模型设计 **^^：
@@ -32,6 +37,8 @@
 2. **协议平面 (Bifrost 2.0)** **: 负责语义转换、MCP 路由及心跳管理 **^^。
 3. **调度平面 (Orchestrator)** **: 实现物理映射、健康检测及多模态回退策略 **^^。
 4. **执行平面 (Physical Providers)** **: 纯 Go 实现的 OpenAI、Vertex AI、Anthropic、DeepSeek 等执行器 **^^。
+
+
 
 ## 📂 目录结构 (Go 规范)
 
