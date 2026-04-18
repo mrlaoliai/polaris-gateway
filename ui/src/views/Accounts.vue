@@ -6,6 +6,7 @@
         <p class="text-slate-500 text-sm mt-1">Manage physical API keys and monitor Sentinel health checks.</p>
       </div>
       <button 
+        @click="showCreateModal = true"
         class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center"
       >
         <svg class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -45,10 +46,10 @@
                 </span>
               </td>
               <td class="px-6 py-4 text-right">
-                <button class="text-slate-400 hover:text-blue-600 text-sm font-medium transition-colors mr-3">
+                <button @click="editAccount(account)" class="text-slate-400 hover:text-blue-600 text-sm font-medium transition-colors mr-3">
                   {{ $t('common.edit') }}
                 </button>
-                <button class="text-red-500 hover:text-red-700 text-sm font-medium transition-colors">
+                <button @click="confirmDelete(account.id)" class="text-red-500 hover:text-red-700 text-sm font-medium transition-colors">
                   {{ $t('common.delete') }}
                 </button>
               </td>
@@ -64,10 +65,22 @@
 import { ref, onMounted } from 'vue'
 
 const accounts = ref([])
+const showCreateModal = ref(false)
 
 const maskKey = (key) => {
   if (!key) return ''
   return `sk-...${key.substring(key.length - 4)}`
+}
+
+const confirmDelete = async (id) => {
+  if (confirm('确认删除此账号？')) {
+    accounts.value = accounts.value.filter(a => a.id !== id)
+  }
+}
+
+const editAccount = (account) => {
+  // TODO: 实现编辑弹窗逻辑
+  alert(`编辑账号: ${account.provider_name}`)
 }
 
 const loadAccounts = () => {

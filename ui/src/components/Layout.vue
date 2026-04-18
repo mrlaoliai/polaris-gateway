@@ -6,7 +6,7 @@
       </div>
 
       <nav class="flex-1 overflow-y-auto py-4 px-3 space-y-1">
-        <router-link to="/dashboard" class="nav-item" active-class="nav-active">{{ $t('nav.dashboard') }}</router-link>
+        <router-link to="/" class="nav-item" active-class="nav-active" exact>{{ $t('nav.dashboard') }}</router-link>
         <router-link to="/keys" class="nav-item" active-class="nav-active">{{ $t('nav.gateway_keys') }}</router-link>
         <router-link to="/routing" class="nav-item" active-class="nav-active">{{ $t('nav.routing_rules') }}</router-link>
         <router-link to="/accounts" class="nav-item" active-class="nav-active">{{ $t('nav.accounts') }}</router-link>
@@ -17,7 +17,7 @@
 
     <div class="flex-1 flex flex-col relative overflow-hidden">
       <header class="h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-8 z-10">
-        <h1 class="text-lg font-semibold text-slate-800 dark:text-slate-100">{{ $route.name ? $t('nav.' + $route.name.toLowerCase()) : '' }}</h1>
+        <h1 class="text-lg font-semibold text-slate-800 dark:text-slate-100">{{ routeTitle }}</h1>
 
         <div class="flex items-center space-x-4">
           <button @click="toggleTheme" class="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
@@ -37,10 +37,24 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import { toggleLanguage } from '../i18n'
 
-const { locale } = useI18n()
+const { locale, t } = useI18n()
 const currentLocale = computed(() => locale.value)
+const route = useRoute()
+
+// 路由名称到 i18n key 的映射表，避免 toLowerCase 导致多词名出错
+const routeNameMap = {
+  Dashboard: 'nav.dashboard',
+  GatewayKeys: 'nav.gateway_keys',
+  RoutingRules: 'nav.routing_rules',
+  Accounts: 'nav.accounts'
+}
+const routeTitle = computed(() => {
+  const key = routeNameMap[route.name]
+  return key ? t(key) : ''
+})
 const isDark = ref(localStorage.getItem('polaris-theme') === 'dark')
 
 const toggleTheme = () => {

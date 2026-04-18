@@ -5,7 +5,8 @@ import { resolve } from 'path'
 
 export default defineConfig({
     plugins: [vue()],
-    base: './',
+    // 【关键修改】base 必须在最顶层
+    base: '/dashboard/',
     resolve: {
         alias: {
             '@': resolve(__dirname, 'src')
@@ -13,6 +14,7 @@ export default defineConfig({
     },
     build: {
         outDir: 'dist',
-        emptyOutDir: true,
+        emptyOutDir: true
+        // 删掉这里错误的 base 配置
     }
 })

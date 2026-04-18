@@ -11,11 +11,32 @@
         "edit": "Edit",
         "delete": "Delete",
         "status": "Status",
-        "actions": "Actions"
+        "actions": "Actions",
+        "cancel": "Cancel",
+        "confirm": "Confirm"
     },
     "dashboard": {
         "total_tokens": "Tokens Today",
         "active_agents": "Active Agents",
         "sentinel_health": "Cluster Health"
+    },
+    "keys": {
+        "generate": "Generate Key",
+        "revoke": "Revoke",
+        "revokeConfirm": "Are you sure you want to revoke this key? All associated agents will be invalidated immediately.",
+        "table": {
+            "value": "Key Value",
+            "limit": "Daily Limit",
+            "used": "Tokens Used",
+            "status": "Status",
+            "actions": "Actions",
+            "limitUnlimited": "Unlimited",
+            "statusActive": "Active",
+            "statusExhausted": "Exhausted"
+        },
+        "modal": {
+            "title": "Create Gateway Key",
+            "limitLabel": "Daily Token Limit (-1 for unlimited)"
+        }
     }
 }
