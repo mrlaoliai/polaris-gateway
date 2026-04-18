@@ -18,6 +18,7 @@ import (
 
 	"github.com/mrlaoliai/polaris-gateway/internal/bridge/dsl"
 	"github.com/mrlaoliai/polaris-gateway/internal/bridge/transformer"
+	"github.com/mrlaoliai/polaris-gateway/internal/config"
 	"github.com/mrlaoliai/polaris-gateway/internal/dashboard"
 	"github.com/mrlaoliai/polaris-gateway/internal/database"
 	"github.com/mrlaoliai/polaris-gateway/internal/orchestrator"
@@ -51,17 +52,24 @@ func (v *vfsWriterInterceptor) Write(p []byte) (n int, err error) {
 }
 
 func main() {
+	// 0. 加载配置文件
+	cfg, err := config.LoadConfig("config.yaml")
+	if err != nil {
+		log.Printf("⚠️ 未找到配置文件，使用默认配置: %v", err)
+		// 这里可以设置一套默认值，或者直接 fatal
+		log.Fatal(err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// 1. 初始化数据库
-	primaryDB, err := database.InitDB("polaris.db")
+	// 1. 使用配置初始化数据库
+	primaryDB, _ := database.InitDB(cfg.Database.Primary)
 	if err != nil {
 		log.Fatalf("❌ 核心数据库初始化失败: %v", err)
 	}
 	defer primaryDB.Close()
-
-	l2DB, err := database.InitDB("polaris_l2.db")
+	l2DB, _ := database.InitDB(cfg.Database.L2)
 	if err != nil {
 		log.Fatalf("❌ L2 索引库初始化失败: %v", err)
 	}
@@ -76,7 +84,8 @@ func main() {
 	router := orchestrator.NewRouter(primaryDB)
 	sentinel := orchestrator.NewSentinel(primaryDB, dbMgr)
 	guardian := middleware.NewGuardian(primaryDB, dbMgr)
-	sessionMgr := state.NewSessionManager(l2DB, dbMgr, "./data/vfs")
+	// 初始化 Session 管理器
+	sessionMgr := state.NewSessionManager(l2DB, dbMgr, cfg.Storage.VFSPath)
 
 	log.Println("🛰️ Polaris Gateway v2.0 运行中...")
 	go sentinel.Start(ctx)
@@ -170,14 +179,17 @@ func main() {
 	mux.Handle("/v1/chat/completions", protectedHandler)
 	mux.Handle("/v1/messages", protectedHandler)
 
+	// 3. 动态组装监听地址
+	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	server := &http.Server{
-		Addr:         ":8080",
+		Addr:         addr,
 		Handler:      mux,
-		ReadTimeout:  15 * time.Minute,
-		WriteTimeout: 15 * time.Minute,
+		ReadTimeout:  time.Duration(cfg.Server.ReadTimeout) * time.Minute,
+		WriteTimeout: time.Duration(cfg.Server.WriteTimeout) * time.Minute,
 	}
 
 	go func() {
+		log.Printf("🚀 Polaris Gateway 运行于 http://%s", addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
