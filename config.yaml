@@ -1,9 +1,10 @@
 # Polaris Gateway 配置文件
 server:
-  host: "127.0.0.1" # 默认只允许本地访问
-  port: 28080        # 修改此处更换端口号
-  read_timeout: 15
-  write_timeout: 15
+  host: "127.0.0.1"     # 默认只允许本地访问
+  port: 8080            # 监听端口
+  max_concurrency: 50   # 全局最大并发请求数 (新增)
+  read_timeout: 15      # 分钟
+  write_timeout: 15     # 分钟
 
 database:
   primary: "polaris.db"

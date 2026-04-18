@@ -9,10 +9,11 @@ import (
 
 type Config struct {
 	Server struct {
-		Host         string `yaml:"host"`
-		Port         int    `yaml:"port"`
-		ReadTimeout  int    `yaml:"read_timeout"`
-		WriteTimeout int    `yaml:"write_timeout"`
+		Host           string `yaml:"host"`
+		Port           int    `yaml:"port"`
+		MaxConcurrency int    `yaml:"max_concurrency"`
+		ReadTimeout    int    `yaml:"read_timeout"`
+		WriteTimeout   int    `yaml:"write_timeout"`
 	} `yaml:"server"`
 
 	Database struct {
