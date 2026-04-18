@@ -9,23 +9,24 @@ import (
 	"time"
 )
 
-// Injector 管理 SSE 流的心跳注入，通过互斥锁实现流控
+// Injector 负责在 SSE 流中原子化地注入保活心跳
 type Injector struct {
 	mu           sync.Mutex
 	clientWriter io.Writer
 	interval     time.Duration
 	payload      []byte
 	stopCh       chan struct{}
+	stopOnce     sync.Once // 确保 Stop 操作的幂等性
 }
 
-// NewInjector 初始化心跳注入器
+// NewInjector 根据协议类型初始化注入器
 func NewInjector(w io.Writer, interval time.Duration, protocolType string) *Injector {
 	var payload []byte
 	if protocolType == "anthropic" {
-		// Anthropic 兼容的静默保活事件
+		// Anthropic 兼容的 SSE 规范：冒号开头代表注释，客户端会忽略但连接保持活跃
 		payload = []byte(": keep-alive\n\n")
 	} else {
-		// 通用 SSE 格式的保活空指令
+		// 通用 SSE 格式的空数据包
 		payload = []byte("data: {}\n\n")
 	}
 
@@ -37,7 +38,7 @@ func NewInjector(w io.Writer, interval time.Duration, protocolType string) *Inje
 	}
 }
 
-// Start 启动后台独立协程执行注入
+// Start 启动异步注入协程
 func (h *Injector) Start(ctx context.Context) {
 	ticker := time.NewTicker(h.interval)
 	go func() {
@@ -49,25 +50,34 @@ func (h *Injector) Start(ctx context.Context) {
 			case <-h.stopCh:
 				return
 			case <-ticker.C:
-				h.inject()
+				if err := h.inject(); err != nil {
+					// 如果写入失败（通常是连接已断开），则自动停止注入
+					return
+				}
 			}
 		}
 	}()
 }
 
-// inject 执行原子的写入与缓冲区刷新
-func (h *Injector) inject() {
+// inject 执行原子的心跳写入
+func (h *Injector) inject() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	_, _ = h.clientWriter.Write(h.payload)
-	// 如果底层连接支持主动 Flush，则强制推送至 TCP 栈
+	_, err := h.clientWriter.Write(h.payload)
+	if err != nil {
+		return err
+	}
+
+	// 执行强制刷新
 	if f, ok := h.clientWriter.(interface{ Flush() }); ok {
 		f.Flush()
 	}
+	return nil
 }
 
-// Write 拦截物理模型的真实数据流，复用同一把锁以防止数据交错
+// Write 由外部 Transformer 调用，用于写入真实的模型数据
+// 此方法与心跳注入共用同一把互斥锁，确保数据块不被切断
 func (h *Injector) Write(p []byte) (n int, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -79,7 +89,9 @@ func (h *Injector) Write(p []byte) (n int, err error) {
 	return n, err
 }
 
-// Stop 释放系统资源
+// Stop 安全停止注入器
 func (h *Injector) Stop() {
-	close(h.stopCh)
+	h.stopOnce.Do(func() {
+		close(h.stopCh)
+	})
 }
