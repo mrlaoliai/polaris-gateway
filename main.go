@@ -22,7 +22,7 @@ import (
 	"github.com/mrlaoliai/polaris-gateway/pkg/provider"
 )
 
-//go:embed ui/src/*
+//go:embed ui/dist/*
 var staticFiles embed.FS
 
 func main() {
@@ -33,127 +33,104 @@ func main() {
 	}
 	defer db.Close()
 
-	// 实例化 DSL 引擎
+	// 实例化核心组件
 	dslEngine, err := dsl.NewEngine()
 	if err != nil {
 		log.Fatalf("无法加载 DSL 引擎: %v", err)
 	}
 
-	log.Println("🛰️ Polaris Gateway v2.0 启动中...")
-	log.Println("设计哲学: Zero-CGO, State-in-DB, Zero-Poetry")
-
-	// 2. 实例化核心组件
 	router := orchestrator.NewRouter(db)
 	sentinel := orchestrator.NewSentinel(db)
 	guardian := middleware.NewGuardian(db)
 
-	// 3. 启动后台拨测
+	log.Println("🛰️ Polaris Gateway v2.0 启动中...")
+	log.Println("设计哲学: Zero-CGO, State-in-DB, Zero-Poetry")
+
+	// 2. 启动后台拨测
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go sentinel.Start(ctx)
 
-	// 4. 组装 HTTP 路由
+	// 3. 组装 HTTP 路由
 	mux := http.NewServeMux()
 
-	// 挂载 Dashboard (VFS 静态资源)
+	// 挂载 Dashboard
 	mux.Handle("/dashboard/", http.StripPrefix("/dashboard/", dashboard.WebUIHandler(staticFiles)))
 
-	// 定义核心的 Chat Completions 处理逻辑
+	// 定义核心处理逻辑
 	coreHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			http.Error(w, "Failed to read body", http.StatusBadRequest)
+			http.Error(w, "Read body failed", 400)
 			return
 		}
 
-		// A. 预解析获取客户端请求的虚拟模型名称
 		var peek struct {
 			Model string `json:"model"`
 		}
-		if err := json.Unmarshal(body, &peek); err != nil {
-			http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
-			return
-		}
+		_ = json.Unmarshal(body, &peek)
 
-		// B. 智能路由决策 (Virtual -> Physical)
+		// A. 智能路由
 		target, err := router.Route(peek.Model)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Routing error: %v", err), http.StatusServiceUnavailable)
+			http.Error(w, err.Error(), 503)
 			return
 		}
-		log.Printf("[Router] 映射成功: %s -> %s (Provider: %s)", peek.Model, target.ModelName, target.Protocol)
 
-		// C. 实例化双向协议翻译器 (Bifrost 2.0)
-		// 假设客户端使用的是 Anthropic 协议 (如 Claude Code)
+		// B. [集成] 执行动态 DSL 规则改写
+		if target.DSLRules != "" {
+			var inputMap map[string]interface{}
+			_ = json.Unmarshal(body, &inputMap)
+			newModel, dslErr := dslEngine.ExecuteTransform(target.DSLRules, inputMap)
+			if dslErr == nil && newModel != "" {
+				log.Printf("[DSL] 物理模型重写: %s -> %s", target.ModelName, newModel)
+				target.ModelName = newModel
+			}
+		}
+
+		// C. 实例化翻译器与执行器
 		trans := transformer.NewAnthropicTransformer(target.ModelName)
-		stdReq, err := trans.TransformRequest(body)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Transform error: %v", err), http.StatusBadRequest)
-			return
-		}
+		stdReq, _ := trans.TransformRequest(body)
 
-		// D. 实例化物理厂商执行器
 		var executor provider.Executor
 		switch target.Protocol {
 		case "anthropic":
 			executor = provider.NewAnthropicExecutor(target.APIKey, target.BaseURL)
 		case "google", "vertex":
-			isVertex := target.Protocol == "vertex"
-			executor = provider.NewGoogleExecutor(target.APIKey, target.BaseURL, isVertex)
+			executor = provider.NewGoogleExecutor(target.APIKey, target.BaseURL, target.Protocol == "vertex")
 		default:
-			http.Error(w, "Unsupported provider protocol", http.StatusInternalServerError)
+			http.Error(w, "Protocol mismatch", 500)
 			return
 		}
 
-		// E. 执行代理请求
+		// D. 代理转发
 		if stdReq.Stream {
 			w.Header().Set("Content-Type", "text/event-stream")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Connection", "keep-alive")
-
-			physicalStream, err := executor.ExecuteStream(r.Context(), stdReq)
+			stream, err := executor.ExecuteStream(r.Context(), stdReq)
 			if err != nil {
-				// 转换为 SSE 错误格式返回
-				fmt.Fprintf(w, "event: error\ndata: {\"error\":{\"message\":\"%s\"}}\n\n", err.Error())
+				fmt.Fprintf(w, "event: error\ndata: {\"error\":\"%v\"}\n\n", err)
 				return
 			}
-			defer physicalStream.Close()
-
-			// 通过 Bifrost 状态机执行响应的实时重写、口癖过滤和影子签名
-			if err := trans.TransformStream(r.Context(), physicalStream, w); err != nil {
-				log.Printf("[Stream Error] %v", err)
-			}
+			defer stream.Close()
+			_ = trans.TransformStream(r.Context(), stream, w)
 		} else {
-			// 非流式请求处理
+			resp, _ := executor.Execute(r.Context(), stdReq)
 			w.Header().Set("Content-Type", "application/json")
-			respData, err := executor.Execute(r.Context(), stdReq)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadGateway)
-				return
-			}
-			w.Write(respData)
+			w.Write(resp)
 		}
 	})
 
-	// 将核心处理逻辑包裹在 Guardian 鉴权/配额拦截器中
-	mux.Handle("/v1/chat/completions", guardian.AuthAndQuotaMiddleware(coreHandler))
-	mux.Handle("/v1/messages", guardian.AuthAndQuotaMiddleware(coreHandler)) // 兼容原生 Anthropic 路径
+	// 挂载鉴权中间件并注册路由
+	protectedHandler := guardian.AuthAndQuotaMiddleware(coreHandler)
+	mux.Handle("/v1/chat/completions", protectedHandler)
+	mux.Handle("/v1/messages", protectedHandler)
 
-	// 5. 启动 HTTP 服务与优雅停机
-	server := &http.Server{
-		Addr:    ":8080",
-		Handler: mux,
-	}
-
+	// 4. 启动服务
+	server := &http.Server{Addr: ":8080", Handler: mux}
 	go func() {
-		log.Println("🚀 服务已监听在 http://localhost:8080")
+		log.Println("🚀 服务监听在 :8080")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("监听失败: %v", err)
+			log.Fatal(err)
 		}
 	}()
 
@@ -161,11 +138,8 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("正在关闭网关...")
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Fatal("服务器强制关闭:", err)
-	}
-	log.Println("Polaris 已安全退出")
+	log.Println("正在优雅停机...")
+	sCtx, sCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer sCancel()
+	_ = server.Shutdown(sCtx)
 }
