@@ -44,8 +44,13 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/stats/overview", h.handleStatsOverview)
 	mux.HandleFunc("/api/v1/stats/traces", h.handleStatsTraces)
 
-	// --- Provider 列表（供前端下拉选择）---
+	// --- Provider 完整 CRUD ---
 	mux.HandleFunc("/api/v1/providers", h.handleProviders)
+	mux.HandleFunc("/api/v1/providers/", h.handleProvidersWithID)
+
+	// --- 模型规格完整 CRUD ---
+	mux.HandleFunc("/api/v1/model-specs", h.handleModelSpecs)
+	mux.HandleFunc("/api/v1/model-specs/", h.handleModelSpecsWithID)
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -445,12 +450,25 @@ func (h *APIHandler) handleStatsTraces(w http.ResponseWriter, r *http.Request) {
 // ─────────────────────────────────────────────────────────────
 
 func (h *APIHandler) handleProviders(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		h.listProviders(w)
+	case http.MethodPost:
+		h.createProvider(w, r)
+	default:
 		writeError(w, http.StatusMethodNotAllowed, "Method Not Allowed")
-		return
 	}
+}
 
-	rows, err := h.db.Query("SELECT id, name, protocol_type, base_url FROM providers ORDER BY id ASC")
+func (h *APIHandler) listProviders(w http.ResponseWriter) {
+	rows, err := h.db.Query(`
+		SELECT p.id, p.name, p.protocol_type, p.base_url,
+		       COUNT(m.id) AS model_count
+		FROM providers p
+		LEFT JOIN model_specs m ON m.provider_id = p.id
+		GROUP BY p.id
+		ORDER BY p.id ASC
+	`)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -462,11 +480,12 @@ func (h *APIHandler) handleProviders(w http.ResponseWriter, r *http.Request) {
 		Name         string `json:"name"`
 		ProtocolType string `json:"protocol_type"`
 		BaseURL      string `json:"base_url"`
+		ModelCount   int    `json:"model_count"`
 	}
 	var providers []ProviderRow
 	for rows.Next() {
 		var p ProviderRow
-		if err := rows.Scan(&p.ID, &p.Name, &p.ProtocolType, &p.BaseURL); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.ProtocolType, &p.BaseURL, &p.ModelCount); err != nil {
 			continue
 		}
 		providers = append(providers, p)
@@ -475,4 +494,75 @@ func (h *APIHandler) handleProviders(w http.ResponseWriter, r *http.Request) {
 		providers = []ProviderRow{}
 	}
 	writeJSON(w, http.StatusOK, providers)
+}
+
+// ─────────────────────────────────────────────────────────────
+// /api/v1/model-specs  (GET)  供前端添加路由规则时选择物理模型
+// 支持 ?provider_id=N 过滤
+// ─────────────────────────────────────────────────────────────
+
+func (h *APIHandler) handleModelSpecs(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.listModelSpecs(w, r)
+	case http.MethodPost:
+		h.createModelSpec(w, r)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "Method Not Allowed")
+	}
+}
+
+func (h *APIHandler) listModelSpecs(w http.ResponseWriter, r *http.Request) {
+
+	query := `
+		SELECT m.id, m.model_name, m.supports_thinking, m.supports_vision, m.dsl_rules,
+		       p.id AS provider_id, p.name AS provider_name, p.protocol_type
+		FROM model_specs m
+		JOIN providers p ON m.provider_id = p.id
+	`
+	args := []interface{}{}
+
+	if pid := r.URL.Query().Get("provider_id"); pid != "" {
+		if n, err := strconv.Atoi(pid); err == nil {
+			query += " WHERE m.provider_id = ?"
+			args = append(args, n)
+		}
+	}
+	query += " ORDER BY p.name ASC, m.model_name ASC"
+
+	rows, err := h.db.Query(query, args...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type SpecRow struct {
+		ID               int    `json:"id"`
+		ModelName        string `json:"model_name"`
+		SupportsThinking bool   `json:"supports_thinking"`
+		SupportsVision   bool   `json:"supports_vision"`
+		DSLRules         string `json:"dsl_rules"`
+		ProviderID       int    `json:"provider_id"`
+		ProviderName     string `json:"provider_name"`
+		ProtocolType     string `json:"protocol_type"`
+	}
+	var specs []SpecRow
+	for rows.Next() {
+		var s SpecRow
+		var thinkingInt, visionInt int
+		if err := rows.Scan(
+			&s.ID, &s.ModelName, &thinkingInt, &visionInt, &s.DSLRules,
+			&s.ProviderID, &s.ProviderName, &s.ProtocolType,
+		); err != nil {
+			continue
+		}
+		s.SupportsThinking = thinkingInt == 1
+		s.SupportsVision = visionInt == 1
+		specs = append(specs, s)
+	}
+	if specs == nil {
+		specs = []SpecRow{}
+	}
+	writeJSON(w, http.StatusOK, specs)
 }

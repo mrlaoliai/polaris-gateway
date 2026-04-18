@@ -9,6 +9,7 @@ const Dashboard = () => import('../views/Dashboard.vue')
 const GatewayKeys = () => import('../views/GatewayKeys.vue')
 const RoutingRules = () => import('../views/RoutingRules.vue')
 const Accounts = () => import('../views/Accounts.vue')
+const Providers = () => import('../views/Providers.vue')
 
 export const router = createRouter({
     // 使用 Hash 模式以获得最佳的后端兼容性（无需复杂的 Nginx/Go 转发配置）
@@ -39,6 +40,11 @@ export const router = createRouter({
                     path: 'accounts',
                     name: 'Accounts',
                     component: Accounts
+                },
+                {
+                    path: 'providers',
+                    name: 'Providers',
+                    component: Providers
                 }
             ]
         }

@@ -4,6 +4,7 @@
         "gateway_keys": "网关凭证",
         "routing_rules": "智能路由",
         "accounts": "密钥资源池",
+        "providers": "厂商与模型",
         "settings": "系统设置"
     },
     "common": {

@@ -4,6 +4,7 @@
         "gateway_keys": "Gateway Keys",
         "routing_rules": "Smart Routing",
         "accounts": "Account Pool",
+        "providers": "Providers & Models",
         "settings": "Settings"
     },
     "common": {

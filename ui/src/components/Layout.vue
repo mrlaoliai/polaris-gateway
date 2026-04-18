@@ -7,9 +7,14 @@
 
       <nav class="flex-1 overflow-y-auto py-4 px-3 space-y-1">
         <router-link to="/" class="nav-item" active-class="nav-active" exact>{{ $t('nav.dashboard') }}</router-link>
+
+        <div class="pt-2 pb-1 px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">代理</div>
         <router-link to="/keys" class="nav-item" active-class="nav-active">{{ $t('nav.gateway_keys') }}</router-link>
         <router-link to="/routing" class="nav-item" active-class="nav-active">{{ $t('nav.routing_rules') }}</router-link>
         <router-link to="/accounts" class="nav-item" active-class="nav-active">{{ $t('nav.accounts') }}</router-link>
+
+        <div class="pt-2 pb-1 px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">配置</div>
+        <router-link to="/providers" class="nav-item" active-class="nav-active">{{ $t('nav.providers') }}</router-link>
       </nav>
 
       <div class="p-4 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-400 text-center">Powered by mrlaoliai</div>
@@ -49,7 +54,8 @@ const routeNameMap = {
   Dashboard: 'nav.dashboard',
   GatewayKeys: 'nav.gateway_keys',
   RoutingRules: 'nav.routing_rules',
-  Accounts: 'nav.accounts'
+  Accounts: 'nav.accounts',
+  Providers: 'nav.providers'
 }
 const routeTitle = computed(() => {
   const key = routeNameMap[route.name]

@@ -39,5 +39,10 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 		return nil, fmt.Errorf("数据库迁移失败: %v", err)
 	}
 
+	// 写入厂商与模型规格种子数据（INSERT OR IGNORE，幂等安全）
+	if err := Seed(db); err != nil {
+		return nil, fmt.Errorf("种子数据写入失败: %v", err)
+	}
+
 	return db, nil
 }
