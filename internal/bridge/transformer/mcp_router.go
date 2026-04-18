@@ -20,7 +20,6 @@ func (r *MCPRouter) FormatToOpenAI(tools []schema.Tool) ([]map[string]interface{
 	var openAITools []map[string]interface{}
 
 	for _, tool := range tools {
-		// 校验工具意图，这里可以无缝接入 V3 文档中的 Dynamic Tool Pruning 逻辑
 		openAITools = append(openAITools, map[string]interface{}{
 			"type": "function",
 			"function": map[string]interface{}{
@@ -33,11 +32,8 @@ func (r *MCPRouter) FormatToOpenAI(tools []schema.Tool) ([]map[string]interface{
 	return openAITools, nil
 }
 
-// ParseToolCallResponse 将底层物理模型返回的工具调用指令转回客户端预期的格式
-// 例如：OpenAI 的 tool_calls 数组 -> Anthropic 的 tool_use 内容块
 func (r *MCPRouter) ParseToolCallResponse(physicalFormat []byte, targetProtocol string) ([]byte, error) {
 	if targetProtocol == "anthropic" {
-		// 解析 OpenAI 的返回
 		var oaiResp struct {
 			Choices []struct {
 				Message struct {
@@ -56,14 +52,13 @@ func (r *MCPRouter) ParseToolCallResponse(physicalFormat []byte, targetProtocol 
 			return nil, err
 		}
 
-		// 转换为 Anthropic 格式
 		if len(oaiResp.Choices) > 0 && len(oaiResp.Choices[0].Message.ToolCalls) > 0 {
 			tc := oaiResp.Choices[0].Message.ToolCalls[0]
 			anthropicResp := map[string]interface{}{
 				"type": "tool_use",
 				"id":   tc.ID,
 				"name": tc.Function.Name,
-				// 修复：必须先转换为 []byte 才能包装为 RawMessage
+				// 修复：必须先将 string 转为 []byte 才能作为 RawMessage
 				"input": json.RawMessage([]byte(tc.Arguments)),
 			}
 			return json.Marshal(anthropicResp)

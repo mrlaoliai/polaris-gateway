@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"log"
 	"net/http"
 	"os"
@@ -12,6 +13,11 @@ import (
 	"github.com/mrlaoliai/polaris-gateway/internal/database"
 	"github.com/mrlaoliai/polaris-gateway/internal/orchestrator"
 )
+
+// 把 embed 声明放在根目录的 main 包下
+//
+//go:embed ui/src/*
+var staticFiles embed.FS
 
 func main() {
 	// 1. 初始化 State-in-DB (SQLite WAL 模式)
@@ -51,7 +57,7 @@ func main() {
 		// transformer.TransformStream(...)
 	})
 
-	mux.Handle("/dashboard/", http.StripPrefix("/dashboard/", dashboard.WebUIHandler()))
+	mux.Handle("/dashboard/", http.StripPrefix("/dashboard/", dashboard.WebUIHandler(staticFiles)))
 
 	server := &http.Server{
 		Addr:    ":8080",

@@ -3,16 +3,12 @@
 package dashboard
 
 import (
-	"embed"
 	"io/fs"
 	"net/http"
 )
 
-//go:embed ui/dist/*
-var staticFiles embed.FS
-
-// WebUIHandler 提供编译入二进制的 Dashboard 前端文件
-func WebUIHandler() http.Handler {
+// WebUIHandler 接收从外部（如 main.go）传入的嵌入静态文件系统
+func WebUIHandler(staticFiles fs.FS) http.Handler {
 	// 剥离 `ui/dist` 前缀，直接将内部文件暴露给 HTTP
 	subFS, err := fs.Sub(staticFiles, "ui/dist")
 	if err != nil {
