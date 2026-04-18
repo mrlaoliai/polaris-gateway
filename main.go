@@ -121,7 +121,7 @@ func main() {
 				}
 			}
 		}
-
+		// D. 协议适配与物理执行器实例化
 		trans := transformer.NewAnthropicTransformer(target.ModelName)
 		stdReq, _ := trans.TransformRequest(body)
 
@@ -129,8 +129,11 @@ func main() {
 		switch target.Protocol {
 		case "anthropic":
 			executor = provider.NewAnthropicExecutor(target.APIKey, target.BaseURL)
-		case "google", "vertex":
-			executor = provider.NewGoogleExecutor(target.APIKey, target.BaseURL, target.Protocol == "vertex")
+		case "google":
+			executor = provider.NewGoogleExecutor(target.APIKey, target.BaseURL)
+		case "vertex":
+			// [新增] 独立实例化的 Vertex 执行器
+			executor = provider.NewVertexExecutor(target.APIKey, target.BaseURL)
 		default:
 			http.Error(w, "Unsupported Protocol", 500)
 			return

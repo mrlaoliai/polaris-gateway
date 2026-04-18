@@ -1,6 +1,6 @@
-// 内部使用：pkg/provider/google.go
+// 内部使用：pkg/provider/vertex.go
 // 作者：mrlaoliai
-// 专注 Google AI Studio (Gemini API) 的协议适配与自适应路径映射
+// 专注 Vertex AI 协议适配，支持 API Key 认证与自适应路径映射
 package provider
 
 import (
@@ -15,20 +15,21 @@ import (
 	"github.com/mrlaoliai/polaris-gateway/internal/bridge/schema"
 )
 
-type GoogleExecutor struct {
-	APIKey  string
-	BaseURL string // 数据库只需配置到模型名，如: https://generativelanguage.googleapis.com/v1beta/models/gemini-pro
+type VertexExecutor struct {
+	APIKey      string
+	BaseURL     string // 数据库只需配置到模型名，如: https://aiplatform.googleapis.com/.../models/gemini-1.5-flash
+	BearerToken string
 }
 
-func NewGoogleExecutor(apiKey, baseURL string) *GoogleExecutor {
-	return &GoogleExecutor{
+func NewVertexExecutor(apiKey, baseURL string) *VertexExecutor {
+	return &VertexExecutor{
 		APIKey:  apiKey,
 		BaseURL: strings.TrimSuffix(baseURL, "/"),
 	}
 }
 
-// buildURL 根据流式状态动态构造完整路径
-func (e *GoogleExecutor) buildURL(isStream bool) string {
+// buildURL 根据流式状态动态构造 Vertex 特有的请求路径
+func (e *VertexExecutor) buildURL(isStream bool) string {
 	action := ":generateContent"
 	if isStream {
 		action = ":streamGenerateContent"
@@ -37,16 +38,21 @@ func (e *GoogleExecutor) buildURL(isStream bool) string {
 	finalURL := e.BaseURL + action
 	sep := "?"
 
-	// Google AI Studio 流式请求必须携带 alt=sse 参数
+	// Vertex 如果是流式，同样需要 alt=sse
 	if isStream {
 		finalURL = fmt.Sprintf("%s%salt=sse", finalURL, sep)
 		sep = "&"
 	}
 
-	return fmt.Sprintf("%s%skey=%s", finalURL, sep, e.APIKey)
+	// 注入 API Key 认证参数
+	if e.APIKey != "" {
+		finalURL = fmt.Sprintf("%s%skey=%s", finalURL, sep, e.APIKey)
+	}
+
+	return finalURL
 }
 
-func (e *GoogleExecutor) buildPayload(stdReq *schema.StandardRequest) ([]byte, error) {
+func (e *VertexExecutor) buildPayload(stdReq *schema.StandardRequest) ([]byte, error) {
 	var contents []map[string]interface{}
 	var systemParts []map[string]interface{}
 
@@ -88,12 +94,17 @@ func (e *GoogleExecutor) buildPayload(stdReq *schema.StandardRequest) ([]byte, e
 	return json.Marshal(payload)
 }
 
-func (e *GoogleExecutor) ExecuteStream(ctx context.Context, stdReq *schema.StandardRequest) (io.ReadCloser, error) {
+func (e *VertexExecutor) ExecuteStream(ctx context.Context, stdReq *schema.StandardRequest) (io.ReadCloser, error) {
 	payload, _ := e.buildPayload(stdReq)
 	url := e.buildURL(true)
 
 	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(payload))
 	req.Header.Set("Content-Type", "application/json")
+
+	// 保留对 Bearer Token 的支持 (可选)
+	if e.BearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+e.BearerToken)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -102,12 +113,16 @@ func (e *GoogleExecutor) ExecuteStream(ctx context.Context, stdReq *schema.Stand
 	return resp.Body, nil
 }
 
-func (e *GoogleExecutor) Execute(ctx context.Context, stdReq *schema.StandardRequest) ([]byte, error) {
+func (e *VertexExecutor) Execute(ctx context.Context, stdReq *schema.StandardRequest) ([]byte, error) {
 	payload, _ := e.buildPayload(stdReq)
 	url := e.buildURL(false)
 
 	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(payload))
 	req.Header.Set("Content-Type", "application/json")
+
+	if e.BearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+e.BearerToken)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
