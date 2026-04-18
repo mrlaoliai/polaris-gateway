@@ -19,13 +19,14 @@ type TargetAccount struct {
 	BaseURL   string
 	ModelName string
 	Protocol  string
+	DSLRules  string // [新增] 存储从 model_specs 表中读取的动态转换规则
 }
 
-// Route 根据虚拟模型名（如 claude-3-opus）寻找最佳物理账号
 func (r *Router) Route(inModel string) (*TargetAccount, error) {
+	// 联表查询：补充读取 m.dsl_rules 字段
 	query := `
 		SELECT 
-			a.id, a.api_key, p.base_url, p.protocol_type, m.model_name
+			a.id, a.api_key, p.base_url, p.protocol_type, m.model_name, m.dsl_rules
 		FROM routing_rules rr
 		JOIN model_specs m ON rr.target_spec_id = m.id
 		JOIN providers p ON m.provider_id = p.id
@@ -42,14 +43,11 @@ func (r *Router) Route(inModel string) (*TargetAccount, error) {
 		&target.BaseURL,
 		&target.Protocol,
 		&target.ModelName,
+		&target.DSLRules,
 	)
 
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("找不到模型 [%s] 的可用路由或账号已耗尽", inModel)
+		return nil, fmt.Errorf("找不到模型 [%s] 的可用路由", inModel)
 	}
-	if err != nil {
-		return nil, err
-	}
-
-	return &target, nil
+	return &target, err
 }

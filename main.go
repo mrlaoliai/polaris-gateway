@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mrlaoliai/polaris-gateway/internal/bridge/dsl"
 	"github.com/mrlaoliai/polaris-gateway/internal/bridge/transformer"
 	"github.com/mrlaoliai/polaris-gateway/internal/dashboard"
 	"github.com/mrlaoliai/polaris-gateway/internal/database"
@@ -31,6 +32,12 @@ func main() {
 		log.Fatalf("无法初始化数据库: %v", err)
 	}
 	defer db.Close()
+
+	// 实例化 DSL 引擎
+	dslEngine, err := dsl.NewEngine()
+	if err != nil {
+		log.Fatalf("无法加载 DSL 引擎: %v", err)
+	}
 
 	log.Println("🛰️ Polaris Gateway v2.0 启动中...")
 	log.Println("设计哲学: Zero-CGO, State-in-DB, Zero-Poetry")
