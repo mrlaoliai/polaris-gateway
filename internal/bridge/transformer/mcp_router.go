@@ -18,7 +18,6 @@ func NewMCPRouter() *MCPRouter {
 // FormatToOpenAI 将标准 MCP 工具定义转换为 OpenAI 的 Function Calling 格式
 func (r *MCPRouter) FormatToOpenAI(tools []schema.Tool) ([]map[string]interface{}, error) {
 	var openAITools []map[string]interface{}
-
 	for _, tool := range tools {
 		openAITools = append(openAITools, map[string]interface{}{
 			"type": "function",
@@ -32,6 +31,7 @@ func (r *MCPRouter) FormatToOpenAI(tools []schema.Tool) ([]map[string]interface{
 	return openAITools, nil
 }
 
+// ParseToolCallResponse 将底层物理模型返回的工具调用指令转回客户端预期的格式
 func (r *MCPRouter) ParseToolCallResponse(physicalFormat []byte, targetProtocol string) ([]byte, error) {
 	if targetProtocol == "anthropic" {
 		var oaiResp struct {
@@ -39,6 +39,7 @@ func (r *MCPRouter) ParseToolCallResponse(physicalFormat []byte, targetProtocol 
 				Message struct {
 					ToolCalls []struct {
 						ID       string `json:"id"`
+						Type     string `json:"type"`
 						Function struct {
 							Name      string `json:"name"`
 							Arguments string `json:"arguments"`
@@ -52,18 +53,23 @@ func (r *MCPRouter) ParseToolCallResponse(physicalFormat []byte, targetProtocol 
 			return nil, err
 		}
 
-		if len(oaiResp.Choices) > 0 && len(oaiResp.Choices[0].Message.ToolCalls) > 0 {
-			tc := oaiResp.Choices[0].Message.ToolCalls[0]
-			anthropicResp := map[string]interface{}{
-				"type": "tool_use",
-				"id":   tc.ID,
-				"name": tc.Function.Name,
-				// 修复：正确的嵌套字段访问路径为 tc.Function.Arguments
-				"input": json.RawMessage([]byte(tc.Function.Arguments)),
+		// 修复：支持多个并行工具调用转换
+		if len(oaiResp.Choices) > 0 {
+			toolCalls := oaiResp.Choices[0].Message.ToolCalls
+			if len(toolCalls) > 0 {
+				var anthropicBlocks []map[string]interface{}
+				for _, tc := range toolCalls {
+					anthropicBlocks = append(anthropicBlocks, map[string]interface{}{
+						"type":  "tool_use",
+						"id":    tc.ID,
+						"name":  tc.Function.Name,
+						"input": json.RawMessage([]byte(tc.Function.Arguments)),
+					})
+				}
+				return json.Marshal(anthropicBlocks)
 			}
-			return json.Marshal(anthropicResp)
 		}
 	}
-
+	// TODO: 增加 Gemini (function_calls) 到 OpenAI/Anthropic 的互转
 	return physicalFormat, nil
 }
