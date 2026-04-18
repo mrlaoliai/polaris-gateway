@@ -5,7 +5,7 @@ import { resolve } from 'path'
 
 export default defineConfig({
     plugins: [vue()],
-    base: '/dashboard/',
+    base: './',
     resolve: {
         alias: {
             '@': resolve(__dirname, 'src')
@@ -14,7 +14,5 @@ export default defineConfig({
     build: {
         outDir: 'dist',
         emptyOutDir: true,
-        // 确保打包出的资源路径是相对的，方便 go:embed 后的路径映射
-        base: './'
     }
 })
