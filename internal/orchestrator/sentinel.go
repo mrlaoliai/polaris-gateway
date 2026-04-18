@@ -1,3 +1,5 @@
+// 内部使用：internal/orchestrator/sentinel.go
+// 作者：mrlaoliai
 package orchestrator
 
 import (
@@ -10,11 +12,22 @@ import (
 )
 
 type Sentinel struct {
-	db *sql.DB
+	db     *sql.DB
+	client *http.Client // [优化] 复用 Client 提升连接效率
 }
 
 func NewSentinel(db *sql.DB) *Sentinel {
-	return &Sentinel{db: db}
+	return &Sentinel{
+		db: db,
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				IdleConnTimeout:     90 * time.Second,
+				MaxIdleConnsPerHost: 10,
+			},
+		},
+	}
 }
 
 func (s *Sentinel) Start(ctx context.Context) {
@@ -32,7 +45,6 @@ func (s *Sentinel) Start(ctx context.Context) {
 }
 
 func (s *Sentinel) checkAccounts(ctx context.Context) {
-	// 联表查询，获取协议类型和基础地址，以便进行真实的物理拨测
 	query := `
 		SELECT a.id, a.api_key, p.protocol_type, p.base_url 
 		FROM accounts a 
@@ -46,6 +58,9 @@ func (s *Sentinel) checkAccounts(ctx context.Context) {
 	}
 	defer rows.Close()
 
+	// [优化] 限制拨测并发数为 20，防止 DB 连接池爆满或被厂商封禁
+	semaphore := make(chan struct{}, 20)
+
 	for rows.Next() {
 		var id int
 		var apiKey, protocol, baseURL string
@@ -53,37 +68,36 @@ func (s *Sentinel) checkAccounts(ctx context.Context) {
 			continue
 		}
 
+		semaphore <- struct{}{} // 获取令牌
 		go func(accountID int, key, proto, url string) {
+			defer func() { <-semaphore }() // 释放令牌
+
 			if !s.realPing(key, proto, url) {
-				log.Printf("[Sentinel] 账号 [%d] 拨测失败，执行下线处理", accountID)
+				log.Printf("[Sentinel] 账号 [%d] 拨测失败，执行状态下线", accountID)
 				_, err := s.db.Exec("UPDATE accounts SET status = 'error' WHERE id = ?", accountID)
 				if err != nil {
-					log.Printf("[Sentinel] 账号 [%d] 状态更新失败: %v", accountID, err)
+					log.Printf("[Sentinel] 账号 [%d] 状态库更新失败: %v", accountID, err)
 				}
 			}
 		}(id, apiKey, protocol, baseURL)
 	}
 }
 
-// realPing 执行真实的物理层探活
 func (s *Sentinel) realPing(apiKey, protocol, baseURL string) bool {
-	client := &http.Client{Timeout: 5 * time.Second}
 	var req *http.Request
 	var err error
 
 	switch protocol {
 	case "openai", "deepseek":
-		// OpenAI 兼容协议通常有 /models 接口可以免费低频测试
+		// 路由转换逻辑保持原有的优雅策略
 		modelsURL := strings.Replace(baseURL, "/chat/completions", "/models", 1)
 		req, err = http.NewRequest("GET", modelsURL, nil)
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	case "anthropic":
-		// Anthropic 可以发送一个极其简单的 1 token 错误请求或验证 headers
 		req, err = http.NewRequest("GET", "https://api.anthropic.com/v1/models", nil)
 		req.Header.Set("x-api-key", apiKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
 	default:
-		// 其他协议暂默认放行或走特殊逻辑
 		return true
 	}
 
@@ -91,15 +105,12 @@ func (s *Sentinel) realPing(apiKey, protocol, baseURL string) bool {
 		return false
 	}
 
-	resp, err := client.Do(req)
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return false
 	}
 	defer resp.Body.Close()
 
-	// 只要不是 401(未授权) 或 403(被封禁/无配额) 或 429(耗尽)，都认为是存活的
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return false
-	}
-	return true
+	// 只要不是 401/403，通常代表账号 Key 本身有效
+	return resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden
 }
