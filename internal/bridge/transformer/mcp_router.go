@@ -58,8 +58,8 @@ func (r *MCPRouter) ParseToolCallResponse(physicalFormat []byte, targetProtocol 
 				"type": "tool_use",
 				"id":   tc.ID,
 				"name": tc.Function.Name,
-				// 修复：必须先将 string 转为 []byte 才能作为 RawMessage
-				"input": json.RawMessage([]byte(tc.Arguments)),
+				// 修复：正确的嵌套字段访问路径为 tc.Function.Arguments
+				"input": json.RawMessage([]byte(tc.Function.Arguments)),
 			}
 			return json.Marshal(anthropicResp)
 		}
