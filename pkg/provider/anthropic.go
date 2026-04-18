@@ -46,7 +46,6 @@ func (e *AnthropicExecutor) ExecuteStream(ctx context.Context, stdReq *schema.St
 	req.Header.Set("x-api-key", e.APIKey)
 	req.Header.Set("anthropic-version", e.Version)
 
-	client := &http.Server{}.Addr          // 实际应使用全局 http.Client
 	httpClient := &http.Client{Timeout: 0} // 流式请求不设总超时
 
 	resp, err := httpClient.Do(req)

@@ -60,10 +60,11 @@ func (r *MCPRouter) ParseToolCallResponse(physicalFormat []byte, targetProtocol 
 		if len(oaiResp.Choices) > 0 && len(oaiResp.Choices[0].Message.ToolCalls) > 0 {
 			tc := oaiResp.Choices[0].Message.ToolCalls[0]
 			anthropicResp := map[string]interface{}{
-				"type":  "tool_use",
-				"id":    tc.ID,
-				"name":  tc.Function.Name,
-				"input": json.RawMessage(tc.Arguments), // 保持 JSON 结构
+				"type": "tool_use",
+				"id":   tc.ID,
+				"name": tc.Function.Name,
+				// 修复：必须先转换为 []byte 才能包装为 RawMessage
+				"input": json.RawMessage([]byte(tc.Arguments)),
 			}
 			return json.Marshal(anthropicResp)
 		}

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/mrlaoliai/polaris-gateway/internal/dashboard"
 	"github.com/mrlaoliai/polaris-gateway/internal/database"
@@ -25,12 +24,8 @@ func main() {
 	log.Println("🛰️ Polaris Gateway v2.0 启动中...")
 	log.Println("设计哲学: Zero-CGO, State-in-DB, Zero-Poetry")
 
-	// 2. 组装路由 (后续填充 Bifrost 逻辑)
+	// 2. 组装路由 (注意：删除了这里原本占位的 /v1/chat/completions 注册)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
-		// 这里将是 Bifrost 2.0 引擎的入口
-		w.Write([]byte("Polaris Gateway v2.0 Node Ready"))
-	})
 
 	// 1. 实例化核心组件
 	router := orchestrator.NewRouter(db)
@@ -41,7 +36,7 @@ func main() {
 	defer cancel()
 	go sentinel.Start(ctx)
 
-	// 3. 更新网关处理函数
+	// 3. 更新网关处理函数 (只保留这一个真实的 Handler)
 	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		// A. 身份校验 (使用 internal/database 中的 gateway_keys)
 		// B. 路由决策
@@ -75,8 +70,6 @@ func main() {
 	<-quit
 
 	log.Println("正在关闭网关...")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
 		log.Fatal("服务器强制关闭:", err)
 	}

@@ -72,7 +72,7 @@ func (t *AnthropicTransformer) TransformStream(ctx context.Context, physicalStre
 	// TODO: 实例化 internal/state 的 SessionManager 用于 L2 溢出
 
 	// 模拟流式读取物理模型响应 (例如 DeepSeek)
-	decoder := json.NewDecoder(physicalStream)
+	//decoder := json.NewDecoder(physicalStream)
 	for {
 		select {
 		case <-ctx.Done():
