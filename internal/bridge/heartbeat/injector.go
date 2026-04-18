@@ -17,6 +17,7 @@ type Injector struct {
 	payload      []byte
 	stopCh       chan struct{}
 	stopOnce     sync.Once // 确保 Stop 操作的幂等性
+	err          error     // Sticky Error: 记录第一次发生的写入错误
 }
 
 // NewInjector 根据协议类型初始化注入器
@@ -51,7 +52,7 @@ func (h *Injector) Start(ctx context.Context) {
 				return
 			case <-ticker.C:
 				if err := h.inject(); err != nil {
-					// 如果写入失败（通常是连接已断开），则自动停止注入
+					// 注入失败通常意味着连接已断开
 					return
 				}
 			}
@@ -64,8 +65,14 @@ func (h *Injector) inject() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	// 如果已经存在粘性错误，不再执行写入
+	if h.err != nil {
+		return h.err
+	}
+
 	_, err := h.clientWriter.Write(h.payload)
 	if err != nil {
+		h.err = err // 记录第一次错误
 		return err
 	}
 
@@ -77,16 +84,33 @@ func (h *Injector) inject() error {
 }
 
 // Write 由外部 Transformer 调用，用于写入真实的模型数据
-// 此方法与心跳注入共用同一把互斥锁，确保数据块不被切断
+// 采用 Sticky Error 模式：一旦发生错误，后续所有写入将直接返回该错误
 func (h *Injector) Write(p []byte) (n int, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	// 检查之前是否已经发生过错误
+	if h.err != nil {
+		return 0, h.err
+	}
+
 	n, err = h.clientWriter.Write(p)
+	if err != nil {
+		h.err = err // 捕获并持久化第一次错误
+		return n, err
+	}
+
 	if f, ok := h.clientWriter.(interface{ Flush() }); ok {
 		f.Flush()
 	}
-	return n, err
+	return n, nil
+}
+
+// Err 返回注入器捕获到的粘性错误
+func (h *Injector) Err() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.err
 }
 
 // Stop 安全停止注入器
