@@ -1,14 +1,15 @@
 // 内部使用：pkg/provider/anthropic.go
 // 作者：mrlaoliai
+// 专注 Anthropic Claude API 的协议适配，确保符合 Linter 规范
 package provider
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/mrlaoliai/polaris-gateway/internal/bridge/schema"
 )
@@ -16,85 +17,80 @@ import (
 type AnthropicExecutor struct {
 	APIKey  string
 	BaseURL string
-	Version string
 }
 
 func NewAnthropicExecutor(apiKey, baseURL string) *AnthropicExecutor {
-	if baseURL == "" {
-		baseURL = "https://api.anthropic.com/v1/messages"
-	}
 	return &AnthropicExecutor{
 		APIKey:  apiKey,
-		BaseURL: baseURL,
-		Version: "2023-06-01",
+		BaseURL: strings.TrimSuffix(baseURL, "/"),
 	}
 }
 
-func (e *AnthropicExecutor) buildPayload(stdReq *schema.StandardRequest, stream bool) ([]byte, error) {
-	var system string
-	var messages []map[string]interface{}
-
-	for _, m := range stdReq.Messages {
-		if m.Role == "system" {
-			system = m.Content
-			continue
-		}
-		messages = append(messages, map[string]interface{}{"role": m.Role, "content": m.Content})
-	}
-
-	// 修复：动态从 stdReq 获取参数，不再硬编码
-	maxTokens := stdReq.MaxTokens
-	if maxTokens == 0 {
-		maxTokens = 8192 // 默认安全值
-	}
-
+func (e *AnthropicExecutor) buildPayload(stdReq *schema.StandardRequest) ([]byte, error) {
+	// 将标准请求转换为 Anthropic 官方格式
 	payload := map[string]interface{}{
-		"model":          stdReq.Model,
-		"messages":       messages,
-		"max_tokens":     maxTokens,
-		"temperature":    stdReq.Temperature,
-		"stop_sequences": stdReq.StopSequences, // 修复：支持停止词
-		"stream":         stream,
+		"model":      stdReq.Model,
+		"messages":   stdReq.Messages,
+		"max_tokens": stdReq.MaxTokens,
+		"stream":     stdReq.Stream,
 	}
 
-	if system != "" {
-		payload["system"] = system
+	// 注入 Thinking 配置 (Anthropic 扩展)
+	if stdReq.Thinking {
+		payload["thinking"] = map[string]interface{}{
+			"type": "enabled",
+			// 根据实际需求动态调整预算，此处设为固定或从配置读取
+			"budget_tokens": 4000,
+		}
 	}
 
 	return json.Marshal(payload)
 }
 
 func (e *AnthropicExecutor) ExecuteStream(ctx context.Context, stdReq *schema.StandardRequest) (io.ReadCloser, error) {
-	payload, _ := e.buildPayload(stdReq, true)
-	req, _ := http.NewRequestWithContext(ctx, "POST", e.BaseURL, bytes.NewBuffer(payload))
+	payload, err := e.buildPayload(stdReq)
+	if err != nil {
+		return nil, err
+	}
 
+	req, err := http.NewRequestWithContext(ctx, "POST", e.BaseURL, bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, err
+	}
+
+	// 注入标准 Anthropic 认证 Header
 	req.Header.Set("x-api-key", e.APIKey)
-	req.Header.Set("anthropic-version", e.Version)
+	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("anthropic api error: %s", string(body))
 	}
 	return resp.Body, nil
 }
 
 func (e *AnthropicExecutor) Execute(ctx context.Context, stdReq *schema.StandardRequest) ([]byte, error) {
-	payload, _ := e.buildPayload(stdReq, false)
-	req, _ := http.NewRequestWithContext(ctx, "POST", e.BaseURL, bytes.NewBuffer(payload))
+	payload, err := e.buildPayload(stdReq)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", e.BaseURL, bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, err
+	}
 
 	req.Header.Set("x-api-key", e.APIKey)
-	req.Header.Set("anthropic-version", e.Version)
+	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	// 修正 Linter: 显式忽略 Body 关闭错误
+	defer func() { _ = resp.Body.Close() }()
+
 	return io.ReadAll(resp.Body)
 }
