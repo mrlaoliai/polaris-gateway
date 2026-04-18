@@ -85,9 +85,17 @@ func main() {
 	go sentinel.Start(ctx)
 
 	mux := http.NewServeMux()
-	mux.Handle("/dashboard/", http.StripPrefix("/dashboard/", dashboard.WebUIHandler(staticFiles)))
+	mux.HandleFunc("/dashboard/", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("--> [UI]  访问页面: %s", r.URL.Path)
+		// 原始逻辑
+		handler := http.StripPrefix("/dashboard/", dashboard.WebUIHandler(staticFiles))
+		handler.ServeHTTP(w, r)
+	})
 
 	coreHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 强制打印所有进入网关接口的请求
+		log.Printf("--> [API] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+
 		traceID := fmt.Sprintf("tx-%d", time.Now().UnixNano())
 		chunkIndex := 0
 
