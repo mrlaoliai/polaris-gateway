@@ -1,0 +1,12 @@
+# .gitignore
+*.log
+.env
+*.db
+*.exe
+/bin/
+*.db-*
+.DS_Store
+polaris
+polaris-gateway
+
+
