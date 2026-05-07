@@ -210,16 +210,7 @@ func (h *Handler) ProxyHandler(w http.ResponseWriter, r *http.Request) {
 	if req.Stream {
 		streamAnthropicResponse(w, finalResp, req, traceID, chosenState, clientType, model)
 	} else {
-		// Simplistic non-stream handler for now, simply pipes vertex response back.
-		// In a production app, we would map the JSON back to Anthropic structure.
-		for k, vv := range finalResp.Header {
-			for _, v := range vv {
-				w.Header().Add(k, v)
-			}
-		}
-		w.WriteHeader(finalResp.StatusCode)
-		io.Copy(w, finalResp.Body)
-		finalResp.Body.Close()
+		handleAnthropicNonStreamResponse(w, finalResp, req, traceID, chosenState, clientType, model)
 	}
 
 	if isNodeFailure {

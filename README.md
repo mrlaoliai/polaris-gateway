@@ -52,11 +52,15 @@ iwr -useb https://raw.githubusercontent.com/mrlaoliai/polaris-gateway/main/scrip
 将你的业务代码（如 NextChat, Aider, LiteLLM 等）的 API URL 指向 Polaris Gateway。
 
 **OpenAI 协议接入：**
-- Base URL: `http://127.0.0.1:28888/openai/v1`
+- Base URL: `http://127.0.0.1:28888/v1/openai`
 - API Key: 任意值（网关将透明替换为你配置在后端的物理 Key）
 
 **Vertex 协议接入：**
-- Base URL: `http://127.0.0.1:28888/vertex/v1`
+- Base URL: `http://127.0.0.1:28888/v1/vertex`
+- API Key: 任意值
+
+**Anthropic (Claude) 协议接入：**
+- Base URL: `http://127.0.0.1:28888/v1/anthropic`
 - API Key: 任意值
 
 ### 3. 常见 AI 客户端接入配置
@@ -69,7 +73,7 @@ iwr -useb https://raw.githubusercontent.com/mrlaoliai/polaris-gateway/main/scrip
   "provider": {
     "google-vertex": {
       "options": {
-        "baseURL": "http://127.0.0.1:28888/vertex/v1"
+        "baseURL": "http://127.0.0.1:28888/v1/vertex"
       }
     }
   }
@@ -80,7 +84,7 @@ iwr -useb https://raw.githubusercontent.com/mrlaoliai/polaris-gateway/main/scrip
 配置环境变量并启动程序：
 ```bash
 export VERTEX_API_KEY="test-key" 
-export VERTEX_API_BASE="http://127.0.0.1:28888/vertex/v1"
+export VERTEX_API_BASE="http://127.0.0.1:28888/v1/vertex"
 export VERTEXAI_PROJECT="project-id"
 export VERTEXAI_LOCATION="global"
 aider --model vertex_ai/gemini-3.1-pro-preview-customtools

@@ -51,17 +51,20 @@ func main() {
 	mux.HandleFunc("/api/admin/nodes", webapi.AdminNodesHandler)
 	mux.HandleFunc("/api/admin/logs", webapi.AdminLogsHandler)
 
-	mux.HandleFunc("/openai/", func(w http.ResponseWriter, r *http.Request) {
-		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/openai")
+	mux.HandleFunc("/v1/openai/", func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/v1/openai")
 		webapi.ConcurrencyLimiter(openaiHandler.ProxyHandler)(w, r)
 	})
 
-	mux.HandleFunc("/vertex/", func(w http.ResponseWriter, r *http.Request) {
-		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/vertex")
+	mux.HandleFunc("/v1/vertex/", func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/v1/vertex")
 		webapi.ConcurrencyLimiter(vertexHandler.ProxyHandler)(w, r)
 	})
 
-	mux.HandleFunc("/anthropic/v1/messages", webapi.ConcurrencyLimiter(anthropicHandler.ProxyHandler))
+	mux.HandleFunc("/v1/anthropic/", func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/v1/anthropic")
+		webapi.ConcurrencyLimiter(anthropicHandler.ProxyHandler)(w, r)
+	})
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
@@ -73,16 +76,16 @@ func main() {
 		
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error": "Only /openai/v1/*, /vertex/v1/*, and /anthropic/v1/messages endpoints are supported"}`))
+		w.Write([]byte(`{"error": "Only /v1/openai/*, /v1/vertex/*, and /v1/anthropic/* endpoints are supported"}`))
 	})
 
 	// 6. 启动控制平面
 	slog.Info("==================================================")
 	slog.Info("🚀 Project Atlas / Polaris Gateway Active", "address", config.AppConfig.ListenAddr)
 	slog.Info("🚦 IO 并发排队槽位 (仅统计 Enabled: true 的物理节点)", "totalActive", totalActive)
-	slog.Info("🌐 OpenAI    协议入口", "url", "http://"+config.AppConfig.ListenAddr+"/openai/v1")
-	slog.Info("🌐 Vertex    协议入口", "url", "http://"+config.AppConfig.ListenAddr+"/vertex/v1")
-	slog.Info("🌐 Anthropic 协议入口", "url", "http://"+config.AppConfig.ListenAddr+"/anthropic/v1/messages")
+	slog.Info("🌐 OpenAI    协议入口", "url", "http://"+config.AppConfig.ListenAddr+"/v1/openai")
+	slog.Info("🌐 Vertex    协议入口", "url", "http://"+config.AppConfig.ListenAddr+"/v1/vertex")
+	slog.Info("🌐 Anthropic 协议入口", "url", "http://"+config.AppConfig.ListenAddr+"/v1/anthropic/messages")
 	slog.Info("==================================================")
 
 	if err := http.ListenAndServe(config.AppConfig.ListenAddr, mux); err != nil {

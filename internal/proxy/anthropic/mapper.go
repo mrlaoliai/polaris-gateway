@@ -23,11 +23,21 @@ func mapToVertexRequest(req MessageRequest) (map[string]interface{}, error) {
 		case string:
 			parts = append(parts, map[string]interface{}{"text": v})
 		case []interface{}:
-			// Simplistic handling of content blocks for now
 			for _, item := range v {
 				if m, ok := item.(map[string]interface{}); ok {
 					if m["type"] == "text" {
 						parts = append(parts, map[string]interface{}{"text": m["text"]})
+					} else if m["type"] == "image" {
+						if source, ok := m["source"].(map[string]interface{}); ok {
+							if source["type"] == "base64" {
+								parts = append(parts, map[string]interface{}{
+									"inlineData": map[string]interface{}{
+										"mimeType": source["media_type"],
+										"data":     source["data"],
+									},
+								})
+							}
+						}
 					}
 				}
 			}

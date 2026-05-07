@@ -140,12 +140,75 @@ func streamAnthropicResponse(w http.ResponseWriter, vertexResp *http.Response, r
 
 	// Settle Usage
 	if promptTokens > 0 || completionTokens > 0 {
-		// Use "vertex" platform for db tracking since we are hitting Vertex
 		db.SaveUsage("vertex", state.Name, clientType, "anthropic_adapter", int64(promptTokens), int64(completionTokens), 0, http.StatusOK)
-
-		// Update account total consumed (rough estimation or just tokens for now)
-		// We'd ideally calculate cost here. For simplicity, just recording tokens via db.
 	}
+}
+
+func handleAnthropicNonStreamResponse(w http.ResponseWriter, vertexResp *http.Response, req MessageRequest, traceID string, state *AccountState, clientType, modelName string) {
+	defer vertexResp.Body.Close()
+	bodyBytes, err := io.ReadAll(vertexResp.Body)
+	if err != nil {
+		http.Error(w, "Failed to read response", http.StatusInternalServerError)
+		return
+	}
+
+	var vResp map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &vResp); err != nil {
+		http.Error(w, "Invalid response from Vertex", http.StatusBadGateway)
+		return
+	}
+
+	var promptTokens, completionTokens int
+	if usage, ok := vResp["usageMetadata"].(map[string]interface{}); ok {
+		if p, ok := usage["promptTokenCount"].(float64); ok {
+			promptTokens = int(p)
+		}
+		if c, ok := usage["candidatesTokenCount"].(float64); ok {
+			completionTokens = int(c)
+		}
+	}
+
+	var text string
+	if candidates, ok := vResp["candidates"].([]interface{}); ok && len(candidates) > 0 {
+		if cand, ok := candidates[0].(map[string]interface{}); ok {
+			if content, ok := cand["content"].(map[string]interface{}); ok {
+				if parts, ok := content["parts"].([]interface{}); ok && len(parts) > 0 {
+					if part, ok := parts[0].(map[string]interface{}); ok {
+						if t, ok := part["text"].(string); ok {
+							text = t
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if promptTokens > 0 || completionTokens > 0 {
+		db.SaveUsage("vertex", state.Name, clientType, "anthropic_adapter", int64(promptTokens), int64(completionTokens), 0, vertexResp.StatusCode)
+	}
+
+	anthropicResp := MessageResponse{
+		ID:           fmt.Sprintf("msg_%s", traceID),
+		Type:         "message",
+		Role:         "assistant",
+		Model:        modelName,
+		StopReason:   "end_turn",
+		StopSequence: "",
+		Usage: Usage{
+			InputTokens:  promptTokens,
+			OutputTokens: completionTokens,
+		},
+		Content: []Content{
+			{
+				Type: "text",
+				Text: text,
+			},
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(vertexResp.StatusCode)
+	json.NewEncoder(w).Encode(anthropicResp)
 }
 
 func writeSSE(w http.ResponseWriter, flusher http.Flusher, eventType string, data interface{}) {
