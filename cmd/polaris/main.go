@@ -85,7 +85,7 @@ func main() {
 	slog.Info("🚦 IO 并发排队槽位 (仅统计 Enabled: true 的物理节点)", "totalActive", totalActive)
 	slog.Info("🌐 OpenAI    协议入口", "url", "http://"+config.AppConfig.ListenAddr+"/v1/openai")
 	slog.Info("🌐 Vertex    协议入口", "url", "http://"+config.AppConfig.ListenAddr+"/v1/vertex")
-	slog.Info("🌐 Anthropic 协议入口", "url", "http://"+config.AppConfig.ListenAddr+"/v1/anthropic/messages")
+	slog.Info("🌐 Anthropic 协议入口", "url", "http://"+config.AppConfig.ListenAddr+"/v1/anthropic")
 	slog.Info("==================================================")
 
 	if err := http.ListenAndServe(config.AppConfig.ListenAddr, mux); err != nil {
