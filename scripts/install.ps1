@@ -1,5 +1,12 @@
 Write-Host "🌌 正在安装 Polaris Gateway (Windows)..." -ForegroundColor Cyan
 
+# 检查管理员权限
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host "❌ 权限不足！请右键点击 PowerShell 并选择“以管理员身份运行”(Run as Administrator) 来执行此脚本。" -ForegroundColor Red
+    exit 1
+}
+
 $Repo = "mrlaoliai/polaris-gateway"
 $BinName = "polaris-gateway.exe"
 $InstallDir = "C:\ProgramData\PolarisGateway"

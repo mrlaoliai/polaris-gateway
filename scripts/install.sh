@@ -28,6 +28,7 @@ curl -sSL -f -o /tmp/${BIN_NAME} "$DL_URL" || {
 }
 
 chmod +x /tmp/${BIN_NAME}
+sudo mkdir -p ${INSTALL_DIR}
 sudo mv /tmp/${BIN_NAME} ${INSTALL_DIR}/${BIN_NAME}
 
 echo "✅ 二进制文件已安装至: ${INSTALL_DIR}/${BIN_NAME}"
