@@ -214,11 +214,11 @@ func AdminNodesHandler(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 }
 
-// AdminLogsHandler returns the tail of the gateway.log file
+// AdminLogsHandler returns the tail of the polaris-gateway.log file
 func AdminLogsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	if logger.LogFile == nil {
-		w.Write([]byte("No log file configured or gateway.log not found.\n"))
+		w.Write([]byte("No log file configured or polaris-gateway.log not found.\n"))
 		return
 	}
 
