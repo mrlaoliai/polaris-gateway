@@ -147,7 +147,7 @@ func (h *Handler) ProxyHandler(w http.ResponseWriter, r *http.Request) {
 	// 粗略估算：综合中英文字符，约 3.5 个字节对应 1 个 Token
 	estTokens := int(float64(payloadSize) / 3.5)
 
-	slog.Info("📥 [请求接入]", "trace_id", traceID, "method", r.Method, "client", clientType, "size_kb", payloadKB, "est_tokens", estTokens, "target", originalURI)
+	slog.Info("📥 [请求接入]", "trace_id", traceID, "method", r.Method, "client", clientType, "size_kb", fmt.Sprintf("%.2f", payloadKB), "est_tokens", estTokens, "target", originalURI)
 	// ⚠️ 超大载荷预警 (当预估 Token 超过 100,000 时在终端标红高亮提醒)
 	if estTokens > 100000 {
 		slog.Warn("⚠️ [上下文过载警告] 客户端发送了超大上下文，建议及时开启新会话！", "trace_id", traceID)
@@ -434,9 +434,9 @@ func streamAndSettleUsage(w http.ResponseWriter, finalResp *http.Response, state
 			poolMutex.Unlock()
 
 			if cached > 0 {
-				slog.Info("💰 结算完成", "trace_id", traceID, "account", state.Name, "model", modelName, "p", p, "cached", cached, "c", c, "cost", fmt.Sprintf("%.4f", cost))
+				slog.Info("💰 结算完成", "trace_id", traceID, "account", state.Name, "model", modelName, "prompt", p, "cached", cached, "completion", c, "cost", fmt.Sprintf("%.4f", cost))
 			} else {
-				slog.Info("💰 结算完成", "trace_id", traceID, "account", state.Name, "model", modelName, "p", p, "c", c, "cost", fmt.Sprintf("%.4f", cost))
+				slog.Info("💰 结算完成", "trace_id", traceID, "account", state.Name, "model", modelName, "prompt", p, "completion", c, "cost", fmt.Sprintf("%.4f", cost))
 			}
 		}
 	}
