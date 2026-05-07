@@ -5,55 +5,43 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: write
-
 jobs:
-  release:
-    name: Build & Release
+  build:
+    name: Build and Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     strategy:
       matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-          - goos: windows
-            goarch: arm64
+        goos: [linux, windows, darwin]
+        goarch: [amd64, arm64]
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '>=1.26.0'
 
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 0
-        run: |
-          mkdir -p bin
+    - name: Build
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+      run: |
+        BINARY_NAME=polaris-gateway
+        if [ "${{ matrix.goos }}" = "windows" ]; then
+          BINARY_NAME=polaris-gateway-windows-${{ matrix.goarch }}.exe
+        else
           BINARY_NAME=polaris-gateway-${{ matrix.goos }}-${{ matrix.goarch }}
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            BINARY_NAME=${BINARY_NAME}.exe
-          fi
-          go build -ldflags="-s -w" -o bin/$BINARY_NAME ./cmd/polaris
+        fi
+        go build -o $BINARY_NAME ./cmd/polaris
 
-      - name: Upload binaries to release
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: bin/polaris-gateway-*
-          tag: ${{ github.ref }}
-          overwrite: true
-          file_glob: true
+    - name: Upload Release Asset
+      uses: softprops/action-gh-release@v2
+      with:
+        files: polaris-gateway-*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
